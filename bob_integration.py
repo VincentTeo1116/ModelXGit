@@ -1,65 +1,65 @@
-# backend/bob_integration.py
-import os
-import httpx
-from dotenv import load_dotenv
-from pathlib import Path
+"""Thin async client for the IBM Bob 2.0 API (the only place that talks to Bob)."""
+from typing import Any, Dict, Optional
 
-# Load environment variables from .env file
-load_dotenv()
+import httpx
+
+import config
+
 
 class BobClient:
-    """Client for interacting with the IBM Bob 2.0 API."""
+    def __init__(
+        self,
+        api_key: Optional[str] = None,
+        endpoint: Optional[str] = None,
+        skills_path: Optional[str] = None,
+        timeout: Optional[float] = None,
+    ):
+        self.api_key = api_key if api_key is not None else config.BOB_API_KEY
+        endpoint = (endpoint or config.BOB_API_ENDPOINT).rstrip("/")
+        self.url = f"{endpoint}/{(skills_path or config.BOB_SKILLS_PATH).lstrip('/')}"
+        self.timeout = timeout or config.BOB_TIMEOUT
 
-    def __init__(self):
-        self.api_key = os.getenv("BOB_API_KEY")
-        self.api_endpoint = os.getenv("BOB_API_ENDPOINT")
-        
+    @property
+    def configured(self) -> bool:
+        return bool(self.api_key)
+
+    async def run_skill(
+        self, skill_name: str, skill_md: str, context: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Send a SKILL.md plus its context to Bob and return Bob's JSON response."""
         if not self.api_key:
-            raise ValueError("BOB_API_KEY is not set in your environment or .env file.")
-        if not self.api_endpoint:
-            raise ValueError("BOB_API_ENDPOINT is not set in your environment or .env file.")
-        
-        # Base URL for the Bob API
-        self.base_url = f"{self.api_endpoint}/inference/v1"
+            raise RuntimeError("BOB_API_KEY is not set: add it to the backend's .env file.")
 
-    async def run_skill(self, skill_path: Path, context: dict) -> dict:
-        """
-        Sends a skill and its context to the Bob API for execution.
-        
-        Args:
-            skill_path: The path to the SKILL.md file.
-            context: A dictionary with repository context (repo_id, repo_path, etc.).
-            
-        Returns:
-            The JSON response from the Bob API.
-        """
-        skill_content = skill_path.read_text(encoding="utf-8")
-
-        payload = {
-            "skill": skill_content,
-            "context": context,
-            # Optional: specify model or other parameters if needed
-            # "model": "bob-default"
-        }
-
+        payload = {"skill": skill_md, "skill_name": skill_name, "context": context}
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
-            # Bob's Cloudflare WAF may require a specific User-Agent
-            "User-Agent": "ibm-bob-openwiki-provider"
+            "Accept": "application/json",
+            "User-Agent": config.USER_AGENT,
         }
 
-        async with httpx.AsyncClient(timeout=300.0) as client:
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
             try:
-                response = await client.post(
-                    f"{self.base_url}/skills/run",
-                    json=payload,
-                    headers=headers
-                )
-                response.raise_for_status()
-                return response.json()
+                resp = await client.post(self.url, json=payload, headers=headers)
+                resp.raise_for_status()
+                data = resp.json()
             except httpx.HTTPStatusError as e:
-                # Provide more context on API errors
-                raise RuntimeError(f"Bob API request failed: {e.response.status_code} - {e.response.text}")
+                status = e.response.status_code
+                if status in (401, 403):
+                    raise RuntimeError(
+                        f"Bob API rejected the request (HTTP {status}) at {self.url}. "
+                        "Check BOB_API_KEY, and that BOB_API_ENDPOINT and "
+                        "BOB_SKILLS_PATH match the official Bob API docs."
+                    ) from e
+                if status == 404:
+                    raise RuntimeError(
+                        f"Bob API path not found (HTTP 404) at {self.url}. "
+                        "Set BOB_SKILLS_PATH to the documented endpoint."
+                    ) from e
+                raise RuntimeError(f"Bob API error {status}: {e.response.text[:1000]}") from e
             except httpx.RequestError as e:
-                raise RuntimeError(f"Could not connect to Bob API: {e}")
+                raise RuntimeError(f"Bob API unreachable at {self.url}: {e}") from e
+            except ValueError as e:
+                raise RuntimeError(f"Bob API returned a non-JSON response from {self.url}") from e
+
+        return data if isinstance(data, dict) else {"result": data}

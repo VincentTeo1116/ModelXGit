@@ -2,6 +2,8 @@
 name: codebase-qa
 description: Role-based codebase Q&A for onboarding. Gives a new developer a briefing tailored to their role (Frontend, Backend, Full Stack, Database, AI/ML, QA, DevOps) and answers any question about the repo with real file references, then suggests 2-3 related follow-up questions after every answer. Use this whenever someone asks how the code works, where something is, what to read first, what a file or function does, what might break if they change something, or says "I'm a ___ developer" — even if they don't mention Q&A.
 trigger: manual
+depends_on: []
+produces: [onboarding/CODEBASE_MAP.md]
 ---
 
 # Codebase Q&A (role-based)

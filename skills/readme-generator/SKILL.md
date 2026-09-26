@@ -1,6 +1,9 @@
 ---
 name: readme-generator
 description: Create a README.md if the repo has none, or audit an existing README for completeness and accuracy and fill in only what's missing or wrong — using the onboarding outputs (clone report, verified setup commands, tech stack, architecture). Use this whenever the user asks to write, fix, update, improve or check a README or project documentation, or as the final step of repo onboarding.
+trigger: manual
+depends_on: [tech-stack-detection, architecture-diagram, setup-dependencies]
+produces: [README.md, onboarding/readme_report.md]
 ---
 
 # README Generator

@@ -5,7 +5,7 @@ Never prints secret values; findings are masked.
 """
 import fnmatch, json, os, subprocess, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from secret_patterns import SENSITIVE_FILES, SAFE_ENV_SUFFIXES, scan_line  # noqa: E402
+from secret_patterns import SENSITIVE_FILES, SAFE_ENV_SUFFIXES, is_lockfile, scan_line_full  # noqa: E402
 
 
 def git(*args):
@@ -32,9 +32,11 @@ def main():
                 seen.add((commit, path))
                 findings.append({"commit": commit[:10], "date": date, "file": path, "type": "Sensitive file committed",
                                  "value": "-", "file_still_exists": path in current_files})
-        elif line.startswith("+") and not line.startswith("+++") and path:
-            for kind, masked in scan_line(line[1:]):
-                key = (path, kind, masked)
+        elif line.startswith("+") and not line.startswith("+++") and path and not is_lockfile(path):
+            for kind, masked, fp in scan_line_full(line[1:]):
+                # De-duplicate on the full value: masked values of different
+                # keys often look identical (every JWT starts "eyJhb").
+                key = (path, kind, fp)
                 if key in seen:
                     continue
                 seen.add(key)

@@ -1,6 +1,11 @@
 ---
 name: setup-dependencies
 description: Detect a project's languages and package managers, install its dependencies, prepare environment files, open the official pages to get any API keys the project needs, and verify it actually runs — then report the exact working commands. Use this whenever the user wants to "set up", "install", "get the project running", "run it locally", "fix setup", "what API keys do I need", or right after a repo has been cloned for onboarding, even if they only say "make it work".
+trigger: auto
+after: repo-clone
+depends_on: []
+parallel_group: setup
+produces: [onboarding/setup.json, onboarding/setup_report.md]
 ---
 
 # Setup Dependencies

@@ -1,6 +1,12 @@
 ---
 name: secret-precommit-scanner
 description: Stop secrets from ever being committed. Checks that sensitive files (.env, serviceAccountKey.json, credentials.json, *.pem, private keys) are in .gitignore, scans staged changes and the working tree for API keys, tokens, SMTP credentials, app-specific passwords, service-account keys and high-entropy strings, and installs a git pre-commit hook that blocks the commit if any are found. Use this whenever the user mentions secrets, API keys, .env, .gitignore, credentials, "is it safe to commit/push", pre-commit hooks, or right after cloning or setting up a repo.
+trigger: auto
+after: repo-clone
+depends_on: []
+parallel_group: security
+produces: [onboarding/secrets_precommit.json]
+local_tools: [scripts/precommit_scan.py --working-tree --json]
 ---
 
 # Secret Pre-Commit Scanner

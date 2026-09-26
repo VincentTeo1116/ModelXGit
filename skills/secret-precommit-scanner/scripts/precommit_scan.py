@@ -8,7 +8,7 @@ Never prints secret values; findings are masked.
 """
 import fnmatch, json, os, subprocess, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from secret_patterns import SENSITIVE_FILES, SAFE_ENV_SUFFIXES, scan_line  # noqa: E402
+from secret_patterns import SENSITIVE_FILES, SAFE_ENV_SUFFIXES, is_lockfile, scan_line  # noqa: E402
 
 
 def git(*args):
@@ -40,7 +40,7 @@ def scan_staged():
     for line in diff.splitlines():
         if line.startswith("+++ b/"):
             current = line[6:]
-        elif line.startswith("+") and not line.startswith("+++") and current:
+        elif line.startswith("+") and not line.startswith("+++") and current and not is_lockfile(current):
             for kind, masked in scan_line(line[1:]):
                 findings.append({"file": current, "type": kind, "value": masked})
     staged = git("diff", "--cached", "--name-only").splitlines()
@@ -53,7 +53,7 @@ def scan_staged():
 def scan_working_tree():
     findings = []
     for p in git("ls-files", "--cached", "--others", "--exclude-standard").splitlines():
-        if not os.path.isfile(p) or os.path.getsize(p) > 2_000_000:
+        if not os.path.isfile(p) or os.path.getsize(p) > 2_000_000 or is_lockfile(p):
             continue
         try:
             with open(p, encoding="utf-8", errors="ignore") as f:
@@ -70,10 +70,25 @@ def install_hook():
     os.makedirs(hooks, exist_ok=True)
     script = os.path.abspath(__file__).replace("\\", "/")
     hook = os.path.join(hooks, "pre-commit")
+    # Pick the first Python that actually runs: on Windows "python3" is often
+    # the Microsoft Store stub, which exists but fails, blocking every commit.
     with open(hook, "w", newline="\n") as f:
         f.write("#!/bin/sh\n"
-                f'PY=$(command -v python3 || command -v python)\n'
-                f'"$PY" "{script}" --staged || exit 1\n')
+                f'SCRIPT="{script}"\n'
+                'PY=""\n'
+                'for c in python3 python py; do\n'
+                '  if "$c" -c "import sys" >/dev/null 2>&1; then PY="$c"; break; fi\n'
+                'done\n'
+                'if [ -z "$PY" ]; then\n'
+                '  echo "secret scan: no working Python found, commit blocked. Install Python 3." >&2\n'
+                '  exit 1\n'
+                'fi\n'
+                'if [ ! -f "$SCRIPT" ]; then\n'
+                '  echo "secret scan: scanner not found at $SCRIPT (skill folder moved?)." >&2\n'
+                '  echo "Re-run: python <skill>/scripts/precommit_scan.py --install-hook" >&2\n'
+                '  exit 1\n'
+                'fi\n'
+                '"$PY" "$SCRIPT" --staged || exit 1\n')
     os.chmod(hook, 0o755)
     print(f"Installed pre-commit hook at {hook}")
 

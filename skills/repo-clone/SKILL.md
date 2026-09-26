@@ -1,6 +1,8 @@
 ---
 name: repo-clone
 description: Clone a GitHub (or other git) repository from a URL and prepare it for onboarding. Use this whenever the user gives a repo link, says "clone", "pull this repo", "get this project", "onboard me to this repo", or starts the onboarding pipeline — even if they don't say the word "clone". This is always the first step before setup, tech stack, architecture, Q&A or README work.
+trigger: entry
+produces: [onboarding/clone_report.json, onboarding/clone_report.md]
 ---
 
 # Repo Clone

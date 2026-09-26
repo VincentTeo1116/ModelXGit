@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#101322">
+  <title>RepoPilot · Model X</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='6' y='14' width='6' height='12' rx='3' fill='%237066e8' opacity='.65'/%3E%3Crect x='13' y='6' width='6' height='20' rx='3' fill='%237066e8'/%3E%3Crect x='20' y='10' width='6' height='16' rx='3' fill='%237066e8' opacity='.82'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="app.css">
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar" aria-label="Main navigation">
+      <a class="brand" href="#/" aria-label="RepoPilot home">
+        <span class="brand-mark"><span></span><span></span><span></span></span>
+        <span>Repo<span class="brand-accent">Pilot</span></span>
+      </a>
+
+      <div class="workspace-switcher">
+        <div class="avatar avatar-purple">MX</div>
+        <div class="workspace-copy"><strong>Model X team</strong><small>IBM Bob 2.0 onboarding</small></div>
+      </div>
+
+      <nav class="nav-list">
+        <p class="nav-label">WORKSPACE</p>
+        <a class="nav-item" href="#/" data-nav="home"><span class="nav-icon">⌂</span>Overview</a>
+        <a class="nav-item" href="#/repos" data-nav="repos"><span class="nav-icon">◈</span>Repositories <span class="nav-count" id="navRepoCount">0</span></a>
+        <a class="nav-item" href="#/skills" data-nav="skills"><span class="nav-icon">✦</span>Skills</a>
+        <p class="nav-label nav-label-spaced">TOOLS</p>
+        <a class="nav-item" href="#/" data-nav="clone" id="navClone"><span class="nav-icon">⌘</span>Clone a repository</a>
+        <a class="nav-item" href="#/settings" data-nav="settings"><span class="nav-icon">⚙</span>Settings</a>
+      </nav>
+
+      <div class="sidebar-bottom">
+        <div class="tip-card">
+          <span class="tip-spark">✦</span>
+          <strong>How it works</strong>
+          <p>Clone a repo and Bob maps it, audits it for secrets and plans the setup. Then ask it anything.</p>
+          <a href="#/skills">See the pipeline <span>→</span></a>
+        </div>
+        <a class="bob-status" id="bobStatus" href="#/settings" title="Bob connection">
+          <span class="bob-dot"></span>
+          <span class="bob-copy"><strong id="bobStatusTitle">Checking Bob…</strong><small id="bobStatusSub">Connecting to the backend</small></span>
+        </a>
+      </div>
+    </aside>
+
+    <main class="main-content" id="top">
+      <header class="topbar">
+        <div class="breadcrumbs"><span>Workspace</span><span class="slash">/</span><strong id="crumb">Overview</strong></div>
+        <div class="top-actions">
+          <span class="health-pill" id="healthPill"><i></i><span>Connecting…</span></span>
+          <div class="avatar avatar-orange">MX</div>
+        </div>
+      </header>
+
+      <div class="content-wrap" id="view" aria-live="polite"></div>
+    </main>
+  </div>
+
+  <div class="toast-stack" id="toasts" role="status" aria-live="polite"></div>
+  <script src="app.js"></script>
+</body>
+</html>

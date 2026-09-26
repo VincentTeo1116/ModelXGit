@@ -1,6 +1,12 @@
 ---
 name: git-history-secret-audit
 description: Audit a repository's entire git history (all branches and tags) for secrets and sensitive files that were ever committed, even if deleted later — produce a report of affected files, commit IDs and credential types — then interactively offer to purge them with git-filter-repo and give post-incident guidance to rotate every exposed credential. Use this whenever the user asks about leaked keys, secrets in git history, "was anything exposed", cleaning or rewriting history, removing a .env from git, or after cloning a repo for onboarding.
+trigger: auto
+after: repo-clone
+depends_on: []
+parallel_group: security
+produces: [onboarding/secrets_history.json, onboarding/secrets_history_report.md]
+local_tools: [scripts/history_scan.py]
 ---
 
 # Git History Secret Audit & Remediation

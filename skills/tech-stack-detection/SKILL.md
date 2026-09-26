@@ -1,6 +1,11 @@
 ---
 name: tech-stack-detection
 description: Automatically detect and document a repository's full tech stack — languages, frontend, backend, database, auth, external services, build tools, testing, CI/CD and deployment — with versions and file evidence for every item. Use this whenever the user asks "what is this built with", "what's the stack", "which frameworks/database does it use", or during repo onboarding, even if they only ask about one layer.
+trigger: auto
+after: repo-clone
+depends_on: []
+parallel_group: analysis
+produces: [onboarding/tech_stack.json, onboarding/tech_stack.md]
 ---
 
 # Tech Stack Detection
