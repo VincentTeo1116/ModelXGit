@@ -12,6 +12,10 @@ produces: [onboarding/setup.json, onboarding/setup_report.md]
 
 A new developer's worst first day is a README that doesn't work. Your job is to take a freshly cloned repo to a verified runnable state, and to write down exactly what worked so nobody has to rediscover it. Be honest: a clear "this step fails, here's why" is far more useful than a false "setup complete".
 
+## When the onboarding backend runs this skill
+
+If your prompt points to `onboarding/.context/`, you're in **plan-only mode**: you can read files but not run commands, open browser pages or talk to the developer. Do step 1 fully. For steps 2–6, write the exact commands the developer should run and mark each step `"skipped: plan only"` (never "success"); list the API-key pages without opening them; don't create `.env` or any file outside `onboarding/`; and report toolchain versions as required only, with `"found": "unknown"`.
+
 ## Approach
 
 1. **Read before you run.** Start from `onboarding/clone_report.json` if it exists, then the README and any setup docs. Scan for manifests and version pins:
@@ -25,7 +29,7 @@ A new developer's worst first day is a README that doesn't work. Your job is to 
 
 2. **Check the toolchain.** Verify the required runtimes and tools are installed and at compatible versions (`node -v`, `python --version`, `java -version`, `docker --version`...). If something is missing or the wrong version, stop and tell the user exactly what to install. Don't install system-wide tools without asking.
 
-3. **Environment files.** If `.env.example` (or similar) exists and `.env` doesn't, create `.env` from it with the placeholder values unchanged, and list which variables the developer must fill in and where they come from (if the code or docs say). Never invent credentials, never print real secret values, never commit `.env`. If the app needs external services (database, Supabase, Firebase, APIs), say which ones and whether the app has any offline or mock fallback.
+3. **Environment files.** If `.env.example` (or similar) exists and `.env` doesn't, create `.env` from it with the placeholder values unchanged, and list which variables the developer must fill in and where they come from (if the code or docs say). Never invent credentials, never print real secret values, never commit `.env`. If the app needs external services (a database, a hosted backend such as Supabase or Firebase, other APIs), say which ones and whether the app has any offline or mock fallback.
 
 4. **API keys helper (open the right pages for the developer).** If the project uses external APIs or services, help the developer get each key quickly, without ever handling the secret yourself:
    - **Find what's needed.** Collect every required key from `.env.example`, env variable reads in the code (`process.env.X`, `import.meta.env.X`, `%VITE_X%`, `os.environ["X"]`), SDK clients (Supabase, Firebase, Stripe, OpenAI, watsonx, Google Maps, SMTP...), and the README. For each one, work out the provider, what the key is for, whether it's required or optional, and whether a free tier or test mode exists.
@@ -48,16 +52,16 @@ Work in the user's shell. On Windows, prefer PowerShell-compatible commands and 
 
 Save to `onboarding/` (create it if needed):
 
-- `onboarding/setup.json`:
+- `onboarding/setup.json` (the values below are only an example of the shape):
   ```json
   {
-    "toolchain": [{"tool": "node", "required": ">=18", "found": "20.11.0", "ok": true}],
-    "env": {"file_created": ".env", "variables_to_fill": ["VITE_SUPABASE_URL"], "external_services": ["Supabase"]},
+    "toolchain": [{"tool": "python", "required": ">=3.10", "found": "3.12.1", "ok": true}],
+    "env": {"file_created": ".env", "variables_to_fill": ["PAYMENTS_API_KEY"], "external_services": ["<payments provider>"]},
     "api_keys": [
-      {"variable": "VITE_SUPABASE_ANON_KEY", "provider": "Supabase", "purpose": "database access from the browser", "required": true, "key_page": "https://supabase.com/dashboard", "opened_in_browser": true, "status": "filled | missing"}
+      {"variable": "PAYMENTS_API_KEY", "provider": "<payments provider>", "purpose": "charging test cards", "required": true, "key_page": "<official API-keys page>", "opened_in_browser": false, "status": "filled | missing"}
     ],
     "steps": [
-      {"name": "install", "command": "npm ci", "cwd": "educonnect", "status": "success | failed | skipped", "notes": "..."}
+      {"name": "install", "command": "pip install -r requirements.txt", "cwd": ".", "status": "success | failed | skipped", "notes": "..."}
     ],
     "run_command": "npm run dev",
     "tests": "passed | failed | none found",

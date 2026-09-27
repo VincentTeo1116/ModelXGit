@@ -18,6 +18,10 @@ Deleting a secret in a new commit does **not** remove it: anyone who clones the 
 - `scripts/secret_patterns.py`: the shared detection rules.
 - If `gitleaks` is available, also run `gitleaks detect --source . --log-opts="--all" --report-path onboarding/gitleaks.json --redact` and merge the results.
 
+## When the onboarding backend runs this skill
+
+If your prompt points to `onboarding/.context/`, the backend has already run `history_scan.py` over the full clone: its result is in `context.local_tool_results`. Do Phase 1 steps 3–4 from that result and write `onboarding/secrets_history.json` (the scan result plus your review) and the report. **Stop there:** don't run Phase 2. Put the rewrite offer and the rotation list in the report as actions for the developer, and always include the post-incident guidance.
+
 ## Phase 1: Audit (read-only)
 1. Make sure all refs are present: `git fetch --all --tags` (if there's a remote).
 2. Run the scan(s).

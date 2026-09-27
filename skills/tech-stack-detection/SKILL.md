@@ -26,7 +26,7 @@ Check as many of these as exist, and reuse `onboarding/clone_report.json` and `o
 
 ## Categories
 
-Use these categories. If a category is absent, say so explicitly ("No backend server: the browser talks to Supabase directly"), because "absent" is useful information:
+Use these categories. If a category is absent, say so explicitly (for example "No backend server: the browser talks to a hosted database directly"), because "absent" is useful information:
 
 languages · frontend · backend · database · auth · external services / APIs · state & data fetching · styling / UI · build & tooling · testing · linting / formatting · CI/CD · deployment / infra
 
@@ -35,24 +35,24 @@ languages · frontend · backend · database · auth · external services / APIs
 - the category
 - **evidence**: file path (plus line if helpful)
 - **confidence**: high (declared *and* used), medium (declared only, or used only), low (inferred from naming)
-- a short note when useful, e.g. "declared in package.json but unused; app actually uses CDN React 17 in index.html"
+- a short note when useful, e.g. "declared in package.json but unused; the app actually loads it from a CDN in its HTML page"
 
 ## Output
 
 Save to `onboarding/`:
 
-- `onboarding/tech_stack.json`:
+- `onboarding/tech_stack.json` (the values below are only an example of the shape; report what this repo actually uses):
   ```json
   {
     "summary": "One-sentence description of the stack.",
     "categories": {
-      "frontend": [{"name": "React", "version": "17.0.2", "evidence": ["index.html:11"], "confidence": "high", "note": "loaded via CDN"}],
+      "frontend": [{"name": "<framework>", "version": "<from lockfile or 'unknown'>", "evidence": ["<file>:<line>"], "confidence": "high", "note": "..."}],
       "backend": [],
-      "database": [{"name": "Supabase (PostgreSQL)", "version": "unknown", "evidence": ["index.html:641", "database.txt"], "confidence": "high"}]
+      "database": [{"name": "<database or service>", "version": "unknown", "evidence": ["<file>"], "confidence": "medium"}]
     },
-    "absent": ["backend: no server code; browser calls Supabase directly"],
+    "absent": ["backend: no server code (say why)"],
     "unused_dependencies": ["..."],
-    "learning_list": {"Frontend": ["React hooks", "..."], "Backend": ["..."]}
+    "learning_list": {"Frontend": ["..."], "Backend": ["..."]}
   }
   ```
 - `onboarding/tech_stack.md`: a clean table per category plus a short "what to learn first for each role" section. This file feeds the README and the dashboard.

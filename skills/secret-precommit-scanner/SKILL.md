@@ -23,6 +23,10 @@ A leaked key is expensive and hard to undo once it's in git history. This skill 
 
 If `gitleaks` is installed, you may run `gitleaks protect --staged` as a second opinion, but the bundled script is the default because it works everywhere.
 
+## When the onboarding backend runs this skill
+
+If your prompt points to `onboarding/.context/`, the backend has already run `precommit_scan.py --working-tree --json` on the clone: its result is in `context.local_tool_results`. Do steps 1, 2 and 4 as a review of that result, but don't edit `.gitignore`, install the hook or stage anything. Record the hook as `"not installed"` and list those steps as actions for the developer.
+
 ## Workflow
 
 1. **Audit `.gitignore`.** Run `python <skill>/scripts/precommit_scan.py --working-tree`. Its `[GITIGNORE]` lines list sensitive files that are either not ignored or already tracked.
@@ -31,7 +35,7 @@ If `gitleaks` is installed, you may run `gitleaks protect --staged` as a second 
 
 2. **Scan the working tree.** Review each `[SECRET]` finding in context before reporting it. Common false positives are placeholders, test fixtures, public keys, and values read from `process.env` / `import.meta.env` / `os.environ`. For each real secret, recommend moving it to `.env` (ignored), referencing it via environment variables, and adding the variable name to `.env.example`.
 
-3. **Install the hook.** With the user's OK, run `--install-hook`. Then demonstrate it: stage a harmless fake key such as `sk-TESTFAKEKEY1234567890abcd`, show that the commit is blocked, and unstage it. If the repo already has a pre-commit hook, don't overwrite it. Chain the scanner into the existing hook instead, and say so.
+3. **Install the hook.** With the user's OK, run `--install-hook`. Then demonstrate it: stage a harmless fake key such as `sk-TESTFAKEKEY1234567890abcd`, show that the commit is blocked, and unstage it. If the repo already has a pre-commit hook, don't overwrite it. Chain the scanner into the existing hook instead, and say so. <!-- secret-scan: allow (documented fake key) -->
 
 4. **False positives.** A line can be allowed by adding the comment `secret-scan: allow` to it. Only suggest this after you've confirmed the value isn't a real secret.
 

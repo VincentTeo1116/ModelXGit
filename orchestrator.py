@@ -14,6 +14,7 @@ import json
 import os
 import re
 import shlex
+import shutil
 import subprocess
 import sys
 import time
@@ -96,6 +97,7 @@ class RepoInfo(BaseModel):
     cloned: bool = False
     commit: Optional[Dict[str, str]] = None
     commits: Optional[int] = None
+    facts: Optional[Dict[str, Any]] = None  # tracked file count, license, README, CI... (file_facts)
 
 
 class Job(BaseModel):
@@ -276,6 +278,33 @@ def repo_facts(dest: Path) -> Dict[str, Any]:
         if len(head) >= 2 else None,
         "commits": int(count) if count.isdigit() else None,
         "branch": branch or None,
+        "facts": file_facts(dest),
+    }
+
+
+TEST_FILE = re.compile(r"(^|/)(tests?|__tests__|spec)/|(^|/)test_[^/]+\.py$|_test\.(py|go)$|\.(test|spec)\.[jt]sx?$")
+
+
+def file_facts(dest: Path) -> Dict[str, Any]:
+    """Exact basics from the tracked files, so the repo-clone skill doesn't have to count."""
+    files = [f for f in _git(["ls-files", "-z"], cwd=dest).stdout.split("\0") if f]
+    root = [f for f in files if "/" not in f]
+    names = {f.rsplit("/", 1)[-1].lower() for f in files}
+    gitattributes = dest / ".gitattributes"
+    return {
+        "files": len(files),
+        "top_level": sorted({f.split("/", 1)[0] + ("/" if "/" in f else "") for f in files}),
+        "license": next((f for f in root if re.match(r"(?i)^(licen[cs]e|copying)(\..*)?$", f)), None),
+        "readme": next((f for f in root if f.lower().startswith("readme")), None),
+        "env_example": sorted(f for f in files if f.rsplit("/", 1)[-1] in (".env.example", ".env.sample", ".env.template")),
+        "docker": sorted(f for f in files if f.rsplit("/", 1)[-1].lower() in ("dockerfile", "docker-compose.yml",
+                                                                                "docker-compose.yaml", "compose.yml", "compose.yaml")),
+        "ci": sorted({f.split("/")[0] + "/" + f.split("/")[1] if f.startswith(".github/workflows/") else f
+                      for f in files if f.startswith((".github/workflows/", ".circleci/"))
+                      or f in (".gitlab-ci.yml", "azure-pipelines.yml", "Jenkinsfile")}),
+        "test_files": sum(1 for f in files if TEST_FILE.search(f)),
+        "submodules": ".gitmodules" in names,
+        "git_lfs": gitattributes.is_file() and "filter=lfs" in gitattributes.read_text(errors="ignore"),
     }
 
 
@@ -439,8 +468,10 @@ def shell_prompt(skill: "SkillInfo", has_question: bool) -> str:
 
 
 def contain_workspace(repo_dir: Path) -> List[str]:
-    """Undo every change outside onboarding/ and README.md (Bob may only write there)."""
-    out = _git(["status", "--porcelain", "-uall", "-z"], cwd=repo_dir).stdout
+    """Undo every change outside onboarding/ and README.md (Bob may only write there).
+    Includes git-ignored files (e.g. a new .env): a fresh clone has none, so any are Bob's."""
+    out = _git(["status", "--porcelain", "-uall", "--ignored=matching", "-z"], cwd=repo_dir).stdout
+    root = repo_dir.resolve()
     entries, reverted, i = out.split("\0"), [], 0
     while i < len(entries):
         entry = entries[i]
@@ -455,11 +486,16 @@ def contain_workspace(repo_dir: Path) -> List[str]:
         for p in paths:
             if p == "README.md" or p.startswith("onboarding/"):
                 continue
-            if _git(["ls-files", "--error-unmatch", p], cwd=repo_dir).returncode == 0:
+            target = (root / p).resolve()
+            if root not in target.parents or ".git" in Path(p).parts:
+                continue  # never touch anything outside the clone or inside .git
+            if code != "!!" and _git(["ls-files", "--error-unmatch", p], cwd=repo_dir).returncode == 0:
                 _git(["checkout", "HEAD", "--", p], cwd=repo_dir)  # restore a tracked file
-            elif (repo_dir / p).is_file():
-                (repo_dir / p).unlink()  # remove a new file
-            reverted.append(p)
+            elif target.is_dir():
+                shutil.rmtree(target, ignore_errors=True)  # a new (ignored) folder
+            elif target.is_file():
+                target.unlink()  # a new file, ignored or not
+            reverted.append(p.rstrip("/"))
     return sorted(set(reverted))
 
 
@@ -567,6 +603,7 @@ class Orchestrator:
             facts = await asyncio.to_thread(repo_facts, dest)
             job.repo.cloned = True
             job.repo.commit, job.repo.commits = facts["commit"], facts["commits"]
+            job.repo.facts = facts["facts"]
             job.repo.branch = job.repo.branch or facts["branch"]
         except Exception as e:
             self._update(job, clone_step, status=StepStatus.failed, error=str(e), finished_at=time.time())

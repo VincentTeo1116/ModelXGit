@@ -33,7 +33,7 @@ Place components into these five layers:
 4. **Database / Storage**: databases, tables or models, caches, file and blob storage, browser storage when it's used as a data store
 5. **External Third-Party APIs**: outside services the system depends on
 
-If a layer doesn't exist, keep it in the output as **absent** with a one-line explanation (e.g. "No API layer: the frontend calls Supabase directly through SupabaseService"). That is one of the most useful facts for a newcomer.
+If a layer doesn't exist, keep it in the output as **absent** with a one-line explanation (for example "No API layer: the frontend calls the hosted database directly through one data-access module"). That is one of the most useful facts for a newcomer.
 
 Group sensibly: aim for roughly 5–20 nodes. Collapse many small files into one meaningful component and list the files inside it.
 
@@ -41,32 +41,32 @@ Group sensibly: aim for roughly 5–20 nodes. Collapse many small files into one
 
 Save to `onboarding/`:
 
-- `onboarding/architecture.json`, which the dashboard renders as an interactive graph where clicking a node shows its files and endpoints:
+- `onboarding/architecture.json`, which the dashboard renders as an interactive graph where clicking a node shows its files and endpoints (the values below are only an example of the shape):
   ```json
   {
     "summary": "2-3 sentence description of the architecture.",
     "layers": [
       {"id": "client", "name": "Client / Frontend", "present": true},
-      {"id": "api", "name": "API / Gateway", "present": false, "note": "Frontend calls Supabase directly"}
+      {"id": "api", "name": "API / Gateway", "present": false, "note": "why it is absent, in one line"}
     ],
     "nodes": [
       {
-        "id": "student-dashboard",
-        "label": "Student Dashboard",
+        "id": "orders-page",
+        "label": "Orders Page",
         "layer": "client",
         "description": "What it does in one line.",
-        "files": [{"path": "index.html", "lines": "2100-2600"}],
+        "files": [{"path": "src/pages/Orders.tsx", "lines": "1-180"}],
         "endpoints": [],
-        "exports": ["StudentDashboard"]
+        "exports": ["OrdersPage"]
       }
     ],
     "edges": [
-      {"from": "student-dashboard", "to": "supabase-service", "type": "calls | reads | writes | navigates | depends_on", "label": "getSubmissions()"}
+      {"from": "orders-page", "to": "orders-service", "type": "calls | reads | writes | navigates | depends_on", "label": "listOrders()"}
     ]
   }
   ```
   Keep node `id`s stable and kebab-case so other tools can link to them.
 - `onboarding/architecture.mmd`: a Mermaid `flowchart` with one `subgraph` per present layer and labelled arrows. Keep labels short so it renders cleanly.
-- `onboarding/architecture.md`: the Mermaid diagram embedded in a ```mermaid block, plus a short walkthrough of 2–3 key request or data flows (e.g. "a student submits an assessment") that follow the arrows.
+- `onboarding/architecture.md`: the Mermaid diagram embedded in a ```mermaid block, plus a short walkthrough of 2–3 key request or data flows (e.g. "a user places an order") that follow the arrows.
 
 Check before finishing: every node has at least one real file, every edge is backed by an actual import or call, and the JSON is valid.

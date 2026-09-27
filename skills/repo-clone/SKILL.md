@@ -9,6 +9,10 @@ produces: [onboarding/clone_report.json, onboarding/clone_report.md]
 
 You are the first step of an AI developer-onboarding pipeline. A new developer hands you a repository link; your job is to get a clean, trustworthy local copy and record the basic facts every later step depends on. Later skills (setup-dependencies, tech-stack-detection, architecture-diagram, codebase-qa, readme-generator) read what you produce, so accuracy here saves time everywhere else.
 
+## When the onboarding backend runs this skill
+
+If your prompt points to `onboarding/.context/`, the backend has already cloned the repository into your workspace, so steps 1–3 below are done. It also measured the basics: use `context.clone` (URL, branch, latest commit, commit count) and `context.clone.facts` (tracked file count, top-level entries, license file, README, `.env.example`, Docker, CI, test folders) as they are. Only check what they don't cover (the risks in step 5), then write the two output files. Don't explore the whole codebase: later skills do that.
+
 ## What to do
 
 1. **Validate the input.** Accept HTTPS or SSH git URLs (GitHub, GitLab, Bitbucket, or any git host). If the user gave a web page URL (e.g. `https://github.com/owner/repo/tree/main/src`), derive the clonable repo URL and tell them which branch or path they pointed at. If the link is ambiguous or not a git repo, ask one short question instead of guessing.
@@ -26,7 +30,7 @@ You are the first step of an AI developer-onboarding pipeline. A new developer h
 
 5. **Record the basics.** Collect:
    - repo name, source URL, branch and latest commit (hash, date, message)
-   - approximate size (file count, top-level folders)
+   - size: the number of tracked files (`git ls-files`, not the number of top-level entries) and the top-level folders
    - LICENSE (type, or "none found")
    - which of these exist: README, `.env.example` / `.env.sample`, Dockerfile / docker-compose, CI config, test folders
    - obvious risks: committed `.env` files, keys or secrets in tracked files (report the file and type only, never the value), very large binaries
@@ -40,12 +44,13 @@ Create an `onboarding/` folder at the repo root (later skills write there too) a
   {
     "repo": "name", "url": "...", "branch": "main",
     "commit": {"hash": "...", "date": "...", "message": "..."},
-    "files": 0, "top_level": ["src", "docs"],
+    "files": 42, "top_level": ["src", "docs"],
     "license": "MIT | none found",
     "has": {"readme": true, "env_example": false, "docker": false, "ci": false, "tests": false},
     "warnings": ["..."]
   }
   ```
+  `files` is the tracked file count; the values above are only an example.
 - `onboarding/clone_report.md`, the same facts in 10–20 readable lines for a human.
 
 Finish with a 3–5 line summary in chat and suggest the next step: "Run setup-dependencies."

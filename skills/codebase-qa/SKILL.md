@@ -20,9 +20,13 @@ The map is your orientation, not your source of truth. Always open the real file
 
 If the developer hasn't said their role, ask in one short question. Common roles: Frontend, Backend, Full Stack, Database, AI/ML, QA/Testing, DevOps. Accept others too.
 
+When the onboarding backend runs this skill (your prompt points to `onboarding/.context/`), you can't ask: the role and question are in `context.user_input`, and earlier answers are in `context.history`. If no role is given, answer for a Full Stack developer and say so in one line.
+
 ## 3. Role briefing
 
-When they give their role, reply with:
+Give the full briefing only when they ask for one, or give their role without a question. If they give a role **and** a question, skip the briefing and answer the question (section 4) from their role's point of view.
+
+The briefing:
 1. **What this project means for you**: 2–3 sentences.
 2. **Your area of the codebase**: the parts you'll own or touch most, with file paths (and line ranges when one big file holds many things).
 3. **Read these first, in order**: each with one line on why it matters.
@@ -30,7 +34,7 @@ When they give their role, reply with:
 5. **Gotchas for your role**: the traps, risky code and "don't touch without checking" spots.
 6. **Good next questions**: 3–5 questions they could ask you (numbered, in the same format as section 5).
 
-If the repo has little or nothing for that role (e.g. a Backend developer on a project with no server), say so plainly, then explain the closest equivalent (e.g. "the data layer is the SupabaseService object in index.html") and what they could realistically work on.
+If the repo has little or nothing for that role (e.g. a Backend developer on a project with no server), say so plainly, then explain the closest equivalent (for example, the module that calls a hosted database directly) and what they could realistically work on.
 
 ## 4. Answering questions
 
