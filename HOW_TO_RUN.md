@@ -17,7 +17,7 @@ You can run it in two ways:
 | **Python 3.10 or newer** | always | https://www.python.org/downloads/ (on Windows tick "Add python.exe to PATH") |
 | **The project** | always | see step 2 |
 | **Node.js 22.15 or newer** | real Bob mode only | https://nodejs.org/ |
-| **Bob Shell** | real Bob mode only | after Node is installed: `npm install -g bobshell` |
+| **Bob Shell** | real Bob mode only | after Node is installed: `npm install -g bobshell` or `irm -Uri https://bob.ibm.com/download/bobshell.ps1 | iex`|
 | **IBM Bob IDE** | optional ("Open in Bob IDE" button) | from the hackathon / https://bob.ibm.com |
 
 Check what you have:
