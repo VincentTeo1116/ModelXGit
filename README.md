@@ -136,6 +136,8 @@ Copy `.env.example` to `.env`. **Never commit `.env`.**
 | `BOB_MAX_TURNS` / `BOB_MAX_COST` / `BOB_SHELL_TIMEOUT` | no | Limits per skill run |
 | `BOB_RETRIES` | no | Retries for temporary Bob failures (default 1) |
 | `WORKSPACE_DIR` / `JOBS_DIR` | no | Where clones and saved jobs go |
+| `ACCESS_CODE` / `SESSION_SECRET` | online | Ask for an access code before anything else (see [DEPLOY.md](DEPLOY.md)) |
+| `MAX_ONBOARDINGS_PER_DAY`, `MAX_SKILL_RUNS_PER_DAY`, `MAX_ACTIVE_ONBOARDINGS`, `MAX_REPO_MB`, `MAX_STORED_JOBS`, `ALLOWED_GIT_HOSTS` | online | Usage limits for a public server (all off by default) |
 
 All options are listed in `.env.example`.
 
@@ -151,6 +153,7 @@ All options are listed in `.env.example`.
 | POST | `/api/repos/{repo_id}/skills/{skill}/run` | Run a manual skill (Q&A body: `{"role", "question"}`) or retry a failed one |
 | GET | `/api/repos/{repo_id}/files[/{path}]`, `/pack.zip` | Onboarding files, one file, or all as a zip |
 | POST | `/api/repos/{repo_id}/open-in-bob` | Open the clone in Bob IDE (only from the same computer) |
+| GET / POST | `/api/auth/status`, `/api/auth/login`, `/api/auth/logout` | Access-code sign-in (only when `ACCESS_CODE` is set) |
 
 ## Tests
 
@@ -169,11 +172,13 @@ main.py              API endpoints + serves the web app
 orchestrator.py      skills, jobs, pipeline, containment, output checks, metrics
 bob_integration.py   Bob Shell client (and the HTTP client used by the stand-in)
 config.py            settings from .env
+access.py            access code and usage limits for a public server
 skills/              the 8 Bob skills (SKILL.md) and the local secret scanners
 frontend/            the ModelXGit web app
 devtools/mock_bob.py labelled stand-in for demos without a Bob key
 tests/               pytest suite
 start.ps1, start.sh  one-command start
+Dockerfile, render.yaml, deploy/   the online deployment (DEPLOY.md)
 ```
 
 Each onboarded repository gets `onboarding/` (Bob's reports and `metrics.json`), `.bob/` (skills
@@ -181,7 +186,8 @@ and the Q&A mode for Bob IDE) and `.bobignore` inside its clone, not in this rep
 
 ## Known limitations
 
-- **No authentication** on the API. Keep it on `127.0.0.1` or put it behind a proxy with auth.
+- **One shared access code**, not user accounts. On your own computer there is no sign-in at all
+  (keep it on `127.0.0.1`); online, set `ACCESS_CODE` and the limits ([DEPLOY.md](DEPLOY.md)).
 - **Public repositories only.**
 - **The Bob IDE button** only works on the computer running the backend.
 - **Bob's cost grows with repo size:** one onboarding of this repo cost about 6 of Bob's cost units.

@@ -292,6 +292,38 @@ def clone_with_retry(url: str, branch: Optional[str], dest: Path, depth: Optiona
             time.sleep(pause * attempt)
 
 
+def dir_size_mb(path: Path) -> float:
+    total = 0
+    for root, _, files in os.walk(path):
+        for name in files:
+            try:
+                total += os.lstat(os.path.join(root, name)).st_size
+            except OSError:
+                pass
+    return total / (1024 * 1024)
+
+
+def remove_tree(path: Path):
+    """Delete a folder, including git's read-only object files (Windows refuses those)."""
+    def retry(func, target, _exc):
+        os.chmod(target, 0o700)
+        func(target)
+    if sys.version_info >= (3, 12):
+        shutil.rmtree(path, onexc=retry)
+    else:
+        shutil.rmtree(path, onerror=retry)
+
+
+def check_clone_size(dest: Path):
+    """MAX_REPO_MB, checked on disk after the clone (the pre-clone check needs the GitHub API)."""
+    if config.MAX_REPO_MB:
+        size = dir_size_mb(dest)
+        if size > config.MAX_REPO_MB:
+            remove_tree(dest)
+            raise RuntimeError(f"The repository is {size:,.0f} MB on disk. This server accepts up to "
+                               f"{config.MAX_REPO_MB} MB; run ModelXGit on your own computer for bigger repos.")
+
+
 def repo_facts(dest: Path) -> Dict[str, Any]:
     head = _git(["log", "-1", "--format=%H%n%aI%n%s"], cwd=dest).stdout.splitlines()
     count = _git(["rev-list", "--count", "HEAD"], cwd=dest).stdout.strip()
@@ -1015,6 +1047,27 @@ class Orchestrator:
         self._save(job)
         return job
 
+    def active_onboardings(self) -> int:
+        return sum(j.status in (JobStatus.queued, JobStatus.running) for j in self.jobs.values())
+
+    def prune_jobs(self, keep: int) -> List[str]:
+        """Delete the oldest finished jobs (clone and saved file) so at most `keep` remain."""
+        finished = sorted((j for j in self.jobs.values() if j.status not in (JobStatus.queued, JobStatus.running)),
+                          key=lambda j: j.created_at)
+        removed = []
+        for job in finished[:max(0, len(self.jobs) - keep)]:
+            try:
+                if self.repo_dir(job).exists():
+                    remove_tree(self.repo_dir(job))
+                (config.JOBS_DIR / f"{job.id}.json").unlink(missing_ok=True)
+            except OSError:
+                continue  # try again next time; never block a new onboarding on cleanup
+            self.jobs.pop(job.id, None)
+            self.repo_jobs.pop(job.repo_id, None)
+            self._contexts.pop(job.repo_id, None)
+            removed.append(job.id)
+        return removed
+
     def job_for_repo(self, repo_id: str) -> Optional[Job]:
         job_id = self.repo_jobs.get(repo_id)
         return self.jobs.get(job_id) if job_id else None
@@ -1075,6 +1128,7 @@ class Orchestrator:
         self._update(job, clone_step, status=StepStatus.running, started_at=clone_started)
         try:
             await asyncio.to_thread(clone_with_retry, job.repo.url, job.repo.branch, dest, job.repo.depth)
+            await asyncio.to_thread(check_clone_size, dest)
             job.repo.clone_seconds = round(time.time() - clone_started, 2)
             facts = await asyncio.to_thread(repo_facts, dest)
             job.repo.cloned = True

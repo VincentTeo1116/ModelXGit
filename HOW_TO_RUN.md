@@ -99,7 +99,11 @@ Bob's cost units and takes about 4–8 minutes.
 | "repository not found, or it is private" | Only public repos are supported |
 | Steps show "Bob key missing" | Check `.env` is in the ModelXGit folder and has `BOB_API_KEY=` |
 
-## 7. Keep your key safe
+## 7. Put it online
+
+See [DEPLOY.md](DEPLOY.md): Render, with an access code and daily limits.
+
+## 8. Keep your key safe
 
 - **Never** send your Bob key in chat, email or screenshots, and never commit `.env`
   (Git already ignores it).

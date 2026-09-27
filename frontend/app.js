@@ -38,6 +38,8 @@ const state = {
   timers: [],
   expanded: new Set(),
   openFile: null,
+  auth: null,   // {required, signed_in}: a hosted server asks for an access code
+  view: null,
 };
 
 // ------------------------------------------------------------------ helpers
@@ -183,6 +185,10 @@ async function api(path, opts = {}) {
   } catch {
     throw Object.assign(new Error("Can't reach the backend. Is it running? Check the API URL in Settings."), { status: 0 });
   }
+  if (res.status === 401 && !path.startsWith("/api/auth/")) {
+    state.auth = { required: true, signed_in: false };  // signed out, or the code changed
+    if (state.view !== "login") route();
+  }
   const type = res.headers.get("content-type") || "";
   const body = type.includes("application/json") ? await res.json() : await res.text();
   if (!res.ok) {
@@ -291,6 +297,23 @@ async function refreshHealth() {
   pill.querySelector("span").textContent = pillText;
 }
 
+// ------------------------------------------------------------------ access code (hosted servers only)
+async function refreshAuth() {
+  try { state.auth = await api("/api/auth/status"); } catch { state.auth = null; }
+  return state.auth;
+}
+const needsSignIn = () => !!(state.auth && state.auth.required && !state.auth.signed_in);
+const usageText = (u) => (u && u.limit ? `${u.used} of ${u.limit}` : `${u ? u.used : 0} (no limit)`);
+
+function hostedHint(h) {
+  const l = h.limits || {}, parts = [];
+  parts.push(l.allowed_git_hosts && l.allowed_git_hosts.length ? `${l.allowed_git_hosts.join(", ")} links` : "https://, ssh:// or git@ links");
+  if (l.max_repo_mb) parts.push(`up to ${l.max_repo_mb} MB`);
+  const o = l.onboardings;
+  if (o && o.limit) parts.push(`${Math.max(0, o.limit - o.used)} of ${o.limit} onboardings left today`);
+  return "⌑ " + parts.join(" · ");
+}
+
 async function refreshJobs() {
   try {
     state.jobs = await api("/api/jobs");
@@ -354,6 +377,45 @@ function activityHtml(jobs, limit = 8) {
 // ------------------------------------------------------------------ views
 const views = {};
 
+views.login = async (view) => {
+  view.innerHTML = `
+    <section class="hero-copy" style="min-height:0;margin-bottom:28px"><div>
+      <p class="eyebrow"><span class="eyebrow-dot"></span>MODEL X · AI DEVELOPER ONBOARDING</p>
+      <h1>Welcome to <em>ModelXGit</em>.</h1>
+      <p class="hero-description">This server is private. Enter the access code you were given to onboard repositories with IBM Bob.</p>
+    </div></section>
+    <section class="card" style="max-width:560px">
+      <form id="loginForm" class="clone-form" novalidate>
+        <label class="field-label" for="accessCode">Access code</label>
+        <div class="input-row" id="codeRow">
+          <span class="link-icon">⚿</span>
+          <input id="accessCode" type="password" autocomplete="current-password" spellcheck="false" placeholder="access code">
+          <button type="submit" class="btn btn-primary">Sign in<span class="button-arrow">→</span></button>
+        </div>
+        <div class="form-error" id="loginError" hidden></div>
+      </form>
+    </section>
+    ${footerHtml()}`;
+  const input = $("#accessCode"), row = $("#codeRow"), err = $("#loginError"), btn = $("#loginForm button");
+  input.focus();
+  input.addEventListener("input", () => { row.classList.remove("invalid"); err.hidden = true; });
+  $("#loginForm").addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    if (!input.value.trim()) { input.focus(); return; }
+    btn.disabled = true;
+    try {
+      state.auth = await api("/api/auth/login", { method: "POST", body: JSON.stringify({ code: input.value }) });
+      toast("Signed in", "ok");
+      route();
+    } catch (ex) {
+      err.textContent = ex.message; err.hidden = false;
+      row.classList.remove("invalid"); void row.offsetWidth; row.classList.add("invalid");
+      btn.disabled = false; input.select();
+    }
+  });
+};
+
+
 views.home = async (view) => {
   view.innerHTML = `
     ${heroHtml()}
@@ -407,6 +469,13 @@ views.home = async (view) => {
     e.currentTarget.setAttribute("aria-expanded", open);
   });
   input.addEventListener("input", () => { row.classList.remove("invalid"); err.hidden = true; });
+  refreshHealth().then(() => {
+    const h = state.health;
+    if (!(h && h.hosted && $("#urlHint"))) return;
+    $("#urlHint").textContent = hostedHint(h);
+    const hosts = h.limits.allowed_git_hosts || [];
+    if (hosts.length) $("#clone .card-subtitle").textContent = `Paste a public ${hosts.join(" or ")} link. You'll confirm before anything runs.`;
+  });
 
   form.addEventListener("submit", (ev) => {
     ev.preventDefault();
@@ -528,14 +597,14 @@ views.settings = async (view) => {
         <label class="field" for="pollMs">Live update speed
           <select class="text-input" id="pollMs"><option value="1000">Every second</option><option value="1500">Every 1.5 seconds</option><option value="3000">Every 3 seconds</option><option value="5000">Every 5 seconds</option></select></label>
         <label class="field" for="baseline">Manual onboarding time (minutes)<input class="text-input" id="baseline" type="number" min="1" step="1" placeholder="your team's own measurement"><small>How long it takes your team to onboard a repo by hand. Used only for the "faster" comparison. Leave it empty rather than guess.</small></label>
-        <div class="confirm-actions"><button class="btn btn-primary" id="saveSettings" type="button">Save</button><button class="btn btn-ghost" id="testConn" type="button">Test connection</button></div>
+        <div class="confirm-actions"><button class="btn btn-primary" id="saveSettings" type="button">Save</button><button class="btn btn-ghost" id="testConn" type="button">Test connection</button>${state.auth && state.auth.required ? `<button class="btn btn-ghost" id="signOut" type="button">Sign out</button>` : ""}</div>
       </div>
       <div class="card">
         <div class="card-title-row"><h2 class="card-title">Backend and Bob</h2><span id="healthBadge"></span></div>
         <div id="healthFacts"><div class="empty">Checking…</div></div>
       </div>
     </div>
-    <div class="card" style="margin-top:18px">
+    <div class="card" style="margin-top:18px" ${state.health && state.health.hosted ? "hidden" : ""}>
       <div class="card-title-row"><h2 class="card-title">Connect the real Bob API</h2></div>
       <p class="card-note">The backend runs each skill with IBM Bob Shell (<code>npm install -g bobshell</code>). Create <code>.env</code> next to <code>main.py</code> and restart the backend. Create the key at bob.ibm.com → API keys; set BOB_ACCEPT_LICENSE only after reading the license (<code>bob --show-license</code>).</p>
       <div class="md"><pre><code>BOB_CLIENT=shell
@@ -556,7 +625,11 @@ BOB_ACCEPT_LICENSE=true</code></pre></div>
         <dt>Bob key</dt><dd>${h.bob_configured ? "set" : "missing"}</dd>
         <dt>Bob connection</dt><dd>${esc(h.bob_client === "shell" ? "IBM Bob Shell (headless)" : "HTTP")} · ${esc(h.bob_url)}</dd>
         <dt>Skills loaded</dt><dd>${esc(h.skills)}</dd>
-        <dt>Clone folder</dt><dd>${esc(h.workspace)}</dd>
+        ${h.workspace ? `<dt>Clone folder</dt><dd>${esc(h.workspace)}</dd>` : ""}
+        ${h.hosted ? `<dt>Onboardings today</dt><dd>${esc(usageText(h.limits.onboardings))}</dd>
+        <dt>Questions and runs today</dt><dd>${esc(usageText(h.limits.skill_runs))}</dd>
+        <dt>Running now</dt><dd>${esc(usageText(h.limits.active_onboardings))}</dd>
+        ${h.limits.max_repo_mb ? `<dt>Largest repo</dt><dd>${esc(h.limits.max_repo_mb)} MB</dd>` : ""}` : ""}
       </dl>
       ${h.warnings.length ? `<ul class="warn-list">${h.warnings.map((w) => `<li>${esc(w)}</li>`).join("")}</ul>` : ""}`;
   };
@@ -570,6 +643,11 @@ BOB_ACCEPT_LICENSE=true</code></pre></div>
     showHealth(); refreshJobs();
   };
   $("#testConn").onclick = showHealth;
+  if ($("#signOut")) $("#signOut").onclick = async () => {
+    try { await api("/api/auth/logout", { method: "POST" }); } catch { /* signed out anyway */ }
+    state.auth = { required: true, signed_in: false };
+    route();
+  };
   showHealth();
 };
 
@@ -905,6 +983,10 @@ views.job = async (view, jobId, deepFile) => {
     const box = $("#ideBox");
     if (!job.repo.cloned || !h) { box.innerHTML = `<p class="card-note" style="margin:0">Available once the repository is cloned.</p>`; return; }
     if (h.error) { box.innerHTML = `<div class="step-error">${esc(h.error)}</div>`; return; }
+    if (state.health && state.health.hosted) {
+      box.innerHTML = `<p class="card-note" style="margin:0">Opening Bob IDE works when ModelXGit runs on your own computer (see HOW_TO_RUN.md). On this server, download the onboarding pack to take every file Bob wrote with you.</p>`;
+      return;
+    }
     const launcher = state.health && state.health.bob_ide;
     box.innerHTML = `
       <p class="card-note" style="margin-top:0">This clone is ready for Bob IDE: the same <strong>${esc(h.skills.length)} skills</strong>, a <strong>Codebase Q&amp;A</strong> mode, and every file Bob wrote in <code>onboarding/</code>. ${h.installed.includes(".bobignore") ? `Secret files (keys, certificates, credentials) are hidden from Bob by <code>.bobignore</code>.` : ""}</p>
@@ -1083,15 +1165,18 @@ async function route() {
   state.expanded.clear();
   const hash = location.hash || "#/";
   const match = ROUTES.find(([re]) => re.test(hash)) || ROUTES[0];
-  const [re, view, crumb, nav] = match;
+  let [re, view, crumb, nav] = match;
   const [, arg, arg2] = hash.match(re) || [];
+  if (!state.auth) await refreshAuth();
+  if (needsSignIn()) [view, crumb, nav] = ["login", "Sign in", ""];
+  state.view = view;
   $("#crumb").textContent = crumb;
   document.querySelectorAll("[data-nav]").forEach((a) => a.classList.toggle("active", a.dataset.nav === nav));
   const el = $("#view");
   el.replaceWith(el.cloneNode(false)); // drop old listeners
   const fresh = $("#view");
   window.scrollTo({ top: 0 });
-  refreshJobs(); // keeps the sidebar repo count right on every page
+  if (view !== "login") refreshJobs(); // keeps the sidebar repo count right on every page
   await views[view](fresh, arg, arg2 && decodeURIComponent(arg2));
 }
 

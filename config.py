@@ -75,3 +75,18 @@ REPO_FILE_MAX_CHARS = _int("REPO_FILE_MAX_CHARS", 400_000)
 MANUAL_BASELINE_MINUTES = float(os.getenv("MANUAL_BASELINE_MINUTES") or 0) or None
 
 CORS_ORIGINS =[o.strip() for o in os.getenv("CORS_ORIGINS", "*").split(",") if o.strip()]
+
+
+# ---- Public deployment (e.g. Render). Everything below is off when empty. ---------------
+# ACCESS_CODE: when set, the app asks for this code before anything else. Use a long random one.
+ACCESS_CODE = os.getenv("ACCESS_CODE", "").strip()
+SESSION_SECRET = os.getenv("SESSION_SECRET", "")     # signs the sign-in cookie; set a random value
+SESSION_DAYS = _int("SESSION_DAYS", 7)               # how long a sign-in lasts
+
+# Usage limits (0 = no limit). Days are UTC.
+MAX_ONBOARDINGS_PER_DAY = _int("MAX_ONBOARDINGS_PER_DAY", 0)
+MAX_SKILL_RUNS_PER_DAY = _int("MAX_SKILL_RUNS_PER_DAY", 0)   # questions, README runs and retries
+MAX_ACTIVE_ONBOARDINGS = _int("MAX_ACTIVE_ONBOARDINGS", 0)   # onboardings running at the same time
+MAX_REPO_MB = _int("MAX_REPO_MB", 0)                         # repository size on disk
+MAX_STORED_JOBS = _int("MAX_STORED_JOBS", 0)                 # older finished ones are deleted
+ALLOWED_GIT_HOSTS = [h.strip().lower() for h in os.getenv("ALLOWED_GIT_HOSTS", "").split(",") if h.strip()]

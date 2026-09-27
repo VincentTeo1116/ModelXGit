@@ -18,7 +18,14 @@ Run:  uvicorn main:app --port 8000
   GET  /api/repos/{repo_id}/files/{path}        one of those files
   GET  /api/repos/{repo_id}/pack.zip            all of them in one download
   POST /api/repos/{repo_id}/open-in-bob         open the clone in Bob IDE (only from this computer)
+  GET  /api/auth/status                         is an access code needed, and is this browser signed in?
+  POST /api/auth/login  {"code"}                sign in with the access code (sets a cookie)
+  POST /api/auth/logout                         sign out
+
+When ACCESS_CODE is set (a public deployment), every /api route except health and auth needs
+the sign-in cookie, and the MAX_* limits in config.py apply. See access.py.
 """
+import asyncio
 import io
 import re
 import zipfile
@@ -26,10 +33,11 @@ from typing import Optional
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import PlainTextResponse, Response
+from fastapi.responses import JSONResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+import access
 import config
 from bob_integration import find_bob_ide, make_bob_client, open_in_bob_ide
 from orchestrator import (
@@ -42,6 +50,10 @@ class RepoCloneRequest(BaseModel):
     branch: Optional[str] = None  # None = the repo's default branch (main, master, ...)
     depth: Optional[int] = Field(None, ge=1)  # None = full history
     confirm: bool = True
+
+
+class LoginRequest(BaseModel):
+    code: str = Field(..., max_length=200)
 
 
 class SkillRunRequest(BaseModel):
@@ -58,6 +70,42 @@ app.add_middleware(
 registry = SkillRegistry(config.SKILLS_DIR)
 bob = make_bob_client()
 orchestrator = Orchestrator(registry, bob)
+usage = access.Usage(config.JOBS_DIR / "usage.json")
+
+OPEN_API_PATHS = {"/api/health", "/api/auth/status", "/api/auth/login", "/api/auth/logout"}
+
+
+@app.middleware("http")
+async def access_gate(request: Request, call_next):
+    path = request.url.path
+    if (access.gate_on() and path.startswith("/api/") and path not in OPEN_API_PATHS
+            and not access.session_valid(request.cookies.get(access.COOKIE))):
+        return JSONResponse({"detail": "Enter the access code to use ModelXGit."}, status_code=401)
+    return await call_next(request)
+
+
+@app.get("/api/auth/status")
+def auth_status(request: Request):
+    return {"required": access.gate_on(), "signed_in": access.session_valid(request.cookies.get(access.COOKIE))}
+
+
+@app.post("/api/auth/login")
+async def auth_login(req: LoginRequest, request: Request, response: Response):
+    if not access.gate_on():
+        return {"required": False, "signed_in": True}
+    if not access.code_matches(req.code):
+        await asyncio.sleep(1)  # slows down guessing
+        raise HTTPException(401, "That access code isn't right.")
+    https = request.url.scheme == "https" or request.headers.get("x-forwarded-proto") == "https"
+    response.set_cookie(access.COOKIE, access.make_session(), max_age=config.SESSION_DAYS * 86400,
+                        httponly=True, secure=https, samesite="lax", path="/")
+    return {"required": True, "signed_in": True}
+
+
+@app.post("/api/auth/logout")
+def auth_logout(response: Response):
+    response.delete_cookie(access.COOKIE, path="/")
+    return {"signed_in": False}
 
 
 def _job_for_repo(repo_id: str) -> Job:
@@ -67,17 +115,32 @@ def _job_for_repo(repo_id: str) -> Job:
     return job
 
 
+def _public_bob_url() -> str:
+    """A public server names the Bob connection without its file path or endpoint."""
+    if not access.gate_on() or "not found" in bob.url:
+        return bob.url
+    return "IBM Bob Shell" if bob.kind == "shell" else "IBM Bob API"
+
+
 @app.get("/api/health")
 def health():
     return {
         "status": "ok",
         "bob_client": bob.kind,
         "bob_configured": bob.configured,
-        "bob_url": bob.url,
+        "bob_url": _public_bob_url(),
         "bob_ide": bool(find_bob_ide()),
-        "workspace": str(config.WORKSPACE),
+        # A public server doesn't show where it keeps clones.
+        "workspace": None if access.gate_on() else str(config.WORKSPACE),
         "skills": len(registry.skills),
         "warnings": registry.warnings,
+        "hosted": access.gate_on(),
+        "limits": {
+            **usage.snapshot(),
+            "active_onboardings": {"used": orchestrator.active_onboardings(), "limit": config.MAX_ACTIVE_ONBOARDINGS},
+            "max_repo_mb": config.MAX_REPO_MB,
+            "allowed_git_hosts": config.ALLOWED_GIT_HOSTS,
+        },
     }
 
 
@@ -94,15 +157,34 @@ def list_skills():
     }
 
 
+def _check_onboarding_limits():
+    try:
+        usage.check("onboardings")
+    except access.LimitError as e:
+        raise HTTPException(429, str(e))
+    if config.MAX_ACTIVE_ONBOARDINGS and orchestrator.active_onboardings() >= config.MAX_ACTIVE_ONBOARDINGS:
+        raise HTTPException(429, "ModelXGit is busy with another onboarding. Try again in a few minutes.")
+
+
 @app.post("/api/repos/clone", status_code=202)
 async def clone_repo_endpoint(req: RepoCloneRequest):
     if not req.confirm:
         raise HTTPException(400, "User must confirm clone")
     try:
         url, branch = normalize_repo_url(req.repo_url, req.branch)
-    except ValueError as e:
+        access.check_host(url)
+    except (ValueError, access.LimitError) as e:
         raise HTTPException(400, str(e))
+    _check_onboarding_limits()
+    try:
+        await access.check_repo_size(url)
+    except access.LimitError as e:
+        raise HTTPException(400, str(e))
+    _check_onboarding_limits()  # again: another request may have started one during the await
 
+    if config.MAX_STORED_JOBS:
+        orchestrator.prune_jobs(config.MAX_STORED_JOBS - 1)
+    usage.add("onboardings")
     job = orchestrator.create_job(url, branch, req.depth)
     orchestrator.start_pipeline(job)
     return {
@@ -183,9 +265,14 @@ async def run_skill(repo_id: str, skill_name: str, req: Optional[SkillRunRequest
         raise HTTPException(400, "repo-clone runs through POST /api/repos/clone")
 
     try:
+        usage.check("skill_runs")
+    except access.LimitError as e:
+        raise HTTPException(429, str(e))
+    try:
         orchestrator.start_skill(job, skill, req.model_dump(exclude_none=True) if req else None)
     except ConflictError as e:
         raise HTTPException(409, str(e))
+    usage.add("skill_runs")
     return {"job_id": job.id, "skill": skill_name, "status": "started"}
 
 
