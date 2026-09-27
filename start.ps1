@@ -1,5 +1,5 @@
 <#
-  RepoPilot (Model X): one-command start on Windows.
+  ModelXGit (Model X): one-command start on Windows.
 
     Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
     .\start.ps1                 # real Bob if .env has BOB_API_KEY, else the stand-in
@@ -55,7 +55,7 @@ if ($StandIn -or -not $hasKey) {
 if (-not $NoBrowser) {
     Start-Job -ScriptBlock { param($p) Start-Sleep 3; Start-Process "http://127.0.0.1:$p/" } -ArgumentList $Port | Out-Null
 }
-Write-Host "RepoPilot on http://127.0.0.1:$Port/  (Ctrl+C to stop)" -ForegroundColor Green
+Write-Host "ModelXGit on http://127.0.0.1:$Port/  (Ctrl+C to stop)" -ForegroundColor Green
 try {
     & $py -m uvicorn main:app --port $Port
 } finally {

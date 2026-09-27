@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# RepoPilot (Model X): one-command start on macOS / Linux.
+# ModelXGit (Model X): one-command start on macOS / Linux.
 #   ./start.sh              real Bob if .env has BOB_API_KEY, else the labelled stand-in
 #   ./start.sh --stand-in   always the stand-in (no key needed)
 # Then open http://127.0.0.1:8000/ (PORT=... to change it).
@@ -31,5 +31,5 @@ trap '[ -n "$MOCK" ] && kill "$MOCK" 2>/dev/null || true' EXIT
 
 ( sleep 3; { command -v open >/dev/null && open "http://127.0.0.1:$PORT/"; } \
   || { command -v xdg-open >/dev/null && xdg-open "http://127.0.0.1:$PORT/"; } || true ) >/dev/null 2>&1 &
-echo "RepoPilot on http://127.0.0.1:$PORT/  (Ctrl+C to stop)"
+echo "ModelXGit on http://127.0.0.1:$PORT/  (Ctrl+C to stop)"
 "$PY" -m uvicorn main:app --port "$PORT"

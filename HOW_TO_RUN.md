@@ -1,6 +1,6 @@
-# How to run RepoPilot (Model X)
+# How to run ModelXGit (Model X)
 
-RepoPilot onboards any GitHub repo with IBM Bob. Paste a repo link, Bob analyses it (setup, tech
+ModelXGit onboards any GitHub repo with IBM Bob. Paste a repo link, Bob analyses it (setup, tech
 stack, architecture, secret audits), then you can ask it questions and generate a README.
 
 You can run it in two ways:

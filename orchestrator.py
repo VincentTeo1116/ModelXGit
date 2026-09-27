@@ -895,7 +895,7 @@ def build_onboarding_report(job: "Job", metrics: Dict[str, Any], order: List[str
     lines += ["## What you need to do", ""]
     lines += [f"- {a}" for a in dict.fromkeys(actions)] or ["- Nothing: every skill finished without open actions."]
     lines += ["", "## All files", "", "Readable reports are the `.md` files; the `.json` files hold the same "
-              "results for the RepoPilot app.", ""]
+              "results for the ModelXGit app.", ""]
     lines += [f"- `{f}`" for f in m["files"]] + ["- `onboarding/metrics.json` (measured numbers)", ""]
     return "\n".join(lines)
 

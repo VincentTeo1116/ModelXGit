@@ -1,4 +1,4 @@
-/* RepoPilot · Model X onboarding frontend.
+/* ModelXGit · Model X onboarding frontend.
    Talks to the FastAPI backend (same origin by default, or the API URL set in Settings). */
 "use strict";
 
@@ -313,7 +313,7 @@ function heroHtml() {
 }
 
 function footerHtml() {
-  return `<footer><span>RepoPilot <b>•</b> Model X onboarding <b>•</b> powered by IBM Bob</span><span><a href="${esc(state.apiBase)}/docs" target="_blank" rel="noopener">API docs</a> <b>•</b> v2.0</span></footer>`;
+  return `<footer><span>ModelXGit <b>•</b> Model X onboarding <b>•</b> powered by IBM Bob</span><span><a href="${esc(state.apiBase)}/docs" target="_blank" rel="noopener">API docs</a> <b>•</b> v2.0</span></footer>`;
 }
 
 function repoCard(job) {

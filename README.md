@@ -1,4 +1,4 @@
-# RepoPilot · Model X
+# ModelXGit · Model X
 
 **AI developer onboarding, powered by IBM Bob.** Paste a GitHub or GitLab repository link. The
 backend clones it and runs eight IBM Bob skills that set it up, map its tech stack and
@@ -91,7 +91,7 @@ From a real IBM Bob run of the full pipeline on this repository (Model X, `pipel
 
 ```mermaid
 flowchart LR
-  UI["RepoPilot web app<br/>frontend/"] -->|REST| API["main.py<br/>API endpoints"]
+  UI["ModelXGit web app<br/>frontend/"] -->|REST| API["main.py<br/>API endpoints"]
   API --> ORC["orchestrator.py<br/>skills, jobs, pipeline,<br/>containment, metrics"]
   SK["skills/*/SKILL.md<br/>+ local scanner scripts"] --> ORC
   ORC -->|git clone| WS[("Workspace<br/>clone + onboarding/")]
@@ -170,7 +170,7 @@ orchestrator.py      skills, jobs, pipeline, containment, output checks, metrics
 bob_integration.py   Bob Shell client (and the HTTP client used by the stand-in)
 config.py            settings from .env
 skills/              the 8 Bob skills (SKILL.md) and the local secret scanners
-frontend/            the RepoPilot web app
+frontend/            the ModelXGit web app
 devtools/mock_bob.py labelled stand-in for demos without a Bob key
 tests/               pytest suite
 start.ps1, start.sh  one-command start
