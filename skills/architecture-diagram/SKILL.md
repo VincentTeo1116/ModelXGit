@@ -69,4 +69,4 @@ Save to `onboarding/`:
 - `onboarding/architecture.mmd`: a Mermaid `flowchart` with one `subgraph` per present layer and labelled arrows. Keep labels short so it renders cleanly.
 - `onboarding/architecture.md`: the Mermaid diagram embedded in a ```mermaid block, plus a short walkthrough of 2–3 key request or data flows (e.g. "a user places an order") that follow the arrows.
 
-Check before finishing: every node has at least one real file, every edge is backed by an actual import or call, and the JSON is valid.
+Check before finishing: every node has at least one real file, every edge is backed by an actual import or call, every edge's `from` and `to` is the `id` of a node in `nodes`, and the JSON is valid.

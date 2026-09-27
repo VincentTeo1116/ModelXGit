@@ -41,9 +41,18 @@ async def run_skill(req: Request):
     ] + [f"- `{tool}` findings (masked): **{n}**" for tool, n in findings.items()]
     md = f"# {name}\n\n{NOTE}\n\n" + "\n".join(facts) + "\n"
 
+    def stand_in_json(path: str):
+        """The shape the dashboard expects (orchestrator.OUTPUT_CONTRACTS), with placeholder values."""
+        from orchestrator import OUTPUT_CONTRACTS
+        blank = {str: "stand-in", int: 0, dict: {}, list: []}
+        data = {key: blank[typ] for key, typ in OUTPUT_CONTRACTS.get(path, {}).items()}
+        data.update({"stand_in": True, "skill": name, "files_received": len(files), "tool_findings": findings})
+        if path.endswith("architecture.json"):
+            data["nodes"] = [{"id": "stand-in", "label": "Stand-in", "layer": "core"}]
+        return data
+
     out_files = {
-        path: ({"stand_in": True, "skill": name, "files_received": len(files), "tool_findings": findings}
-               if path.endswith(".json") else
+        path: (stand_in_json(path) if path.endswith(".json") else
                "flowchart LR\n  A[Stand-in] --> B[Real Bob API not connected]\n" if path.endswith(".mmd") else md)
         for path in ctx.get("orchestrator", {}).get("expected_files", [])
     }

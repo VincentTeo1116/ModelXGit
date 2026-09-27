@@ -32,6 +32,17 @@ If your prompt points to `onboarding/.context/`, the backend has already run `hi
    - a severity per finding (critical: private keys, cloud or service-account keys, passwords; high: API tokens; low: public or anon keys)
    - which credentials must be rotated
    Keep values masked everywhere.
+5. Write `onboarding/secrets_history.json` in exactly this shape (the dashboard reads it; values are only an example):
+   ```json
+   {
+     "summary": {"commits_scanned": 82, "findings": 3, "confirmed": 1, "false_positives": 2, "rotate": ["Supabase anon key"]},
+     "findings": [
+       {"commit": "ddbb86b4c7", "date": "2025-12-31", "file": "index.html", "type": "JWT / Supabase key",
+        "value": "eyJhb...[masked]", "still_in_current_files": false, "severity": "low",
+        "false_positive": false, "reason": "one line on why"}
+     ]
+   }
+   ```
 
 ## Phase 2: Interactive remediation (only with explicit consent)
 Present the report, then ask plainly:
@@ -58,7 +69,7 @@ Do nothing destructive without a clear yes. If they agree:
 - Turn on the host's secret scanning / push protection (e.g. GitHub → Settings → Code security).
 
 ## Rules
-- Never display, log or commit a secret value. Mask everything.
+- Never display, log or commit a secret value. Mask everything, including values you believe are fake, test or placeholder keys: quote them masked too (first 5 characters + `...[masked]`).
 - Never rewrite history, force-push, or delete branches without explicit confirmation of that specific action.
 - Always make a backup before rewriting.
 - Be honest: rotating credentials matters more than purging history.

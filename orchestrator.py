@@ -595,6 +595,79 @@ def install_bob_ide_files(repo_dir: Path, registry: "SkillRegistry") -> Dict[str
     }
 
 
+# ---- Output contract: the JSON files the dashboard relies on ------------------------
+OUTPUT_CONTRACTS: Dict[str, Dict[str, type]] = {
+    "onboarding/clone_report.json": {"repo": str, "url": str, "branch": str, "commit": dict, "files": int,
+                                     "top_level": list, "license": str, "has": dict, "warnings": list},
+    "onboarding/setup.json": {"toolchain": list, "env": dict, "steps": list, "run_command": str, "tests": str,
+                              "issues": list},
+    "onboarding/tech_stack.json": {"summary": str, "categories": dict, "absent": list},
+    "onboarding/architecture.json": {"summary": str, "layers": list, "nodes": list, "edges": list},
+    "onboarding/secrets_history.json": {"summary": dict, "findings": list},
+    "onboarding/secrets_precommit.json": {"summary": dict, "gitignore_status": dict, "findings": list, "hook": dict},
+}
+_scan_line = None
+
+
+def _secret_scanner():
+    """Our own scanner rules (skills/secret-precommit-scanner), to catch unmasked values."""
+    global _scan_line
+    if _scan_line is None:
+        import importlib.util
+        path = config.SKILLS_DIR / "secret-precommit-scanner" / "scripts" / "secret_patterns.py"
+        spec = importlib.util.spec_from_file_location("modelx_secret_patterns", path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        _scan_line = module.scan_line
+    return _scan_line
+
+
+def validate_output(rel: str, text: str) -> List[str]:
+    """Problems with one output file ([] = valid). Checks JSON shape and unmasked secrets."""
+    problems: List[str] = []
+    try:
+        scan = _secret_scanner()
+        leaks = {kind for line in text.splitlines() for kind, _ in scan(line)}
+        if leaks:
+            problems.append(f"possible unmasked secret ({', '.join(sorted(leaks))})")
+    except Exception:
+        pass  # the secret check is extra safety; never block on it
+    contract = OUTPUT_CONTRACTS.get(rel)
+    if not contract:
+        return problems
+    try:
+        data = json.loads(text)
+    except ValueError as e:
+        return problems + [f"not valid JSON ({e.msg} at line {e.lineno})"]
+    if not isinstance(data, dict):
+        return problems + ["top level is not a JSON object"]
+    for key, typ in contract.items():
+        if key not in data:
+            problems.append(f"missing key '{key}'")
+        elif not isinstance(data[key], typ) or (typ is int and isinstance(data[key], bool)):
+            problems.append(f"'{key}' should be {typ.__name__}, got {type(data[key]).__name__}")
+    if rel.endswith("architecture.json") and isinstance(data.get("nodes"), list) and isinstance(data.get("edges"), list):
+        ids = {n.get("id") for n in data["nodes"] if isinstance(n, dict)}
+        bad_nodes = [i for i, n in enumerate(data["nodes"]) if not isinstance(n, dict) or not all(k in n for k in ("id", "label", "layer"))]
+        if bad_nodes:
+            problems.append(f"{len(bad_nodes)} node(s) missing id/label/layer")
+        dangling = [f"{e.get('from')}->{e.get('to')}" for e in data["edges"]
+                    if isinstance(e, dict) and (e.get("from") not in ids or e.get("to") not in ids)]
+        if dangling:
+            problems.append(f"edges point to unknown nodes: {', '.join(dangling[:5])}")
+    return problems
+
+
+def validate_outputs(repo_dir: Path, files: List[str]) -> Dict[str, List[str]]:
+    """Check the files a skill wrote; only JSON contracts and the secret check apply."""
+    report = {}
+    for rel in files:
+        path = repo_dir / rel
+        if path.is_file() and (rel in OUTPUT_CONTRACTS or rel.endswith((".json", ".md", ".mmd"))):
+            report[rel] = validate_output(rel, path.read_text(encoding="utf-8", errors="replace"))
+    return report
+
+
 # ---- Impact metrics: measured by the backend, never written by Bob -------------------
 def summarize_tools(tools: Dict[str, Any]) -> Dict[str, Any]:
     """Counts only (no values) from the local scanner scripts."""
@@ -631,6 +704,9 @@ def compute_metrics(job: "Job", pipeline: List[str]) -> Dict[str, Any]:
     history = sum(v.get("findings", 0) for v in scanners.get("git-history-secret-audit", {}).values())
     current = sum(v.get("findings", 0) for v in scanners.get("secret-precommit-scanner", {}).values())
     files = sorted({f for s in steps.values() for f in s.files_written})
+    checks: Dict[str, List[str]] = {}
+    for s in steps.values():
+        checks.update((s.output or {}).get("validation") or {})
 
     comparison = None
     baseline = config.MANUAL_BASELINE_MINUTES
@@ -657,6 +733,9 @@ def compute_metrics(job: "Job", pipeline: List[str]) -> Dict[str, Any]:
         },
         "files_produced": len(files),
         "files": files,
+        "outputs_checked": len(checks),
+        "outputs_valid": sum(1 for p in checks.values() if not p),
+        "output_problems": {f: p for f, p in checks.items() if p},
         "secret_findings": {
             "git_history": history, "current_files": current, "total": history + current,
             "note": "Raw scanner findings, values masked; Bob's reports say which are false positives.",
@@ -939,6 +1018,13 @@ class Orchestrator:
                         )
             if tools is not None:
                 output["scanner"] = summarize_tools(tools)  # counts only, for the impact metrics
+            if written:  # the output contract: shape of the JSON files, no unmasked secrets
+                checks = await asyncio.to_thread(validate_outputs, self.repo_dir(job), written)
+                output["validation"] = checks
+                bad = {f: p for f, p in checks.items() if p}
+                if bad:
+                    output.setdefault("warnings", []).append(
+                        "Output check: " + "; ".join(f"{f}: {', '.join(p)}" for f, p in bad.items()))
             run.status, run.output = StepStatus.success, output
         except Exception as e:
             error = str(e)

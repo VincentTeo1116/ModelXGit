@@ -40,13 +40,26 @@ If your prompt points to `onboarding/.context/`, the backend has already run `pr
 4. **False positives.** A line can be allowed by adding the comment `secret-scan: allow` to it. Only suggest this after you've confirmed the value isn't a real secret.
 
 ## Report
-Save `onboarding/secrets_precommit.json` (the `--json` output plus the actions taken) and give a short chat summary:
+Save `onboarding/secrets_precommit.json` in exactly this shape (the dashboard reads it; values are only an example):
+```json
+{
+  "summary": {"findings": 2, "confirmed": 0, "false_positives": 2, "gitignore": "ok | needs action"},
+  "gitignore_status": {"ok": true, "problems": [{"file": ".env", "issue": "not covered by .gitignore"}]},
+  "findings": [
+    {"file": "src/config.js", "line": 12, "type": "Hardcoded secret assignment", "value": "admin...[masked]",
+     "false_positive": true, "reason": "one line on why"}
+  ],
+  "hook": {"status": "installed | not installed", "notes": "..."},
+  "developer_actions": ["..."]
+}
+```
+Then give a short chat summary:
 - **.gitignore status:** fixed, OK, or needs action
 - **Secrets in the working tree:** how many, with the file and type of each (masked)
 - **Hook:** installed or not
 - **Next step:** run git-history-secret-audit if anything sensitive was ever tracked
 
 ## Rules
-- Never print, log or copy a secret's value. Always mask it (first 5 characters + `...[masked]`).
+- Never print, log or copy a secret's value. Always mask it (first 5 characters + `...[masked]`), including values you believe are fake, test or placeholder keys.
 - Never commit, push, or delete a user's files without asking.
 - Blocking commits is the point, so don't weaken a pattern just to make a finding go away. Fix the code instead.

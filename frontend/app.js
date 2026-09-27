@@ -573,7 +573,11 @@ views.job = async (view, jobId) => {
           ${s.error ? `<div class="step-error">${esc(s.error)}</div>` : ""}
           ${out.actions_for_user && out.actions_for_user.length ? `<div><h4>Needs your action</h4><ul>${out.actions_for_user.map((a) => `<li>${esc(a)}</li>`).join("")}</ul></div>` : ""}
           ${out.warnings && out.warnings.length ? `<div><h4>Warnings</h4><ul>${out.warnings.map((w) => `<li>${esc(w)}</li>`).join("")}</ul></div>` : ""}
-          ${s.files_written && s.files_written.length ? `<div><h4>Files</h4>${s.files_written.map((f) => `<button class="file-chip" type="button" data-file="${esc(f)}">${esc(f)}</button>`).join("")}</div>` : ""}
+          ${s.files_written && s.files_written.length ? `<div><h4>Files</h4>${s.files_written.map((f) => {
+            const v = out.validation && out.validation[f];
+            const mark = v ? (v.length ? " ⚠" : " ✓") : "";
+            return `<button class="file-chip ${v && v.length ? "bad" : ""}" type="button" data-file="${esc(f)}" title="${esc(v ? (v.length ? v.join("; ") : "passed the output check") : "")}">${esc(f)}${mark}</button>`;
+          }).join("")}</div>` : ""}
           ${canRetry ? `<div><button class="btn btn-soft btn-sm" type="button" data-retry="${esc(name)}">↻ Retry this skill</button></div>` : ""}
         </div>` : ""}
       </div>`;
@@ -639,7 +643,7 @@ views.job = async (view, jobId) => {
       <div class="impact-grid">
         ${tile("Time to onboard", m.time_to_onboard_seconds ? fmtSecs(m.time_to_onboard_seconds) : "running…", `clone ${fmtSecs(m.clone_seconds)} · then Bob`)}
         ${tile("Skills completed", `${m.skills.succeeded}/${m.skills.total}`, m.skills.failed ? `${m.skills.failed} failed` : m.skills.running ? `${m.skills.running} running` : "no failures")}
-        ${tile("Files produced", m.files_produced, "onboarding/ + README")}
+        ${tile("Files produced", m.files_produced, m.outputs_checked ? `${m.outputs_valid}/${m.outputs_checked} passed the output check` : "onboarding/ + README")}
         ${tile("Secret findings", m.secret_findings.total, `history ${m.secret_findings.git_history} · current ${m.secret_findings.current_files}`)}
         ${tile("Bob tool calls", stand ? "—" : m.bob.tool_calls, `${m.bob.runs} Bob runs · ${fmtSecs(m.bob.seconds)} of Bob work`)}
         ${tile("Bob cost", stand ? "—" : Number(m.bob.cost).toFixed(2), stand ? "stand-in: no real Bob" : "Bob's own figure")}
