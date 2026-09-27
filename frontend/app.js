@@ -330,7 +330,7 @@ views.home = async (view) => {
       <ul>
         <li>The backend clones the repository, then Bob writes the clone report.</li>
         <li>These run automatically with Bob: ${autoSkills.map((s) => `<strong>${esc(skillName(s))}</strong>`).join(", ")}.</li>
-        <li>Bob reads the cloned code (IBM Bob). It can't run commands and may only write to <code>onboarding/</code> and <code>README.md</code>; anything else it changes is undone.</li>
+        <li>Bob reads the cloned code (IBM Bob). It can't run commands and may only write to <code>onboarding/</code> and <code>README.md</code>; anything else it changes is undone. Secret files such as keys and credentials are hidden from Bob.</li>
       </ul>
       <div class="confirm-actions">
         <button class="btn btn-primary" id="confirmClone" type="button">Clone and run skills</button>
@@ -655,7 +655,7 @@ views.job = async (view, jobId) => {
     if (h.error) { box.innerHTML = `<div class="step-error">${esc(h.error)}</div>`; return; }
     const launcher = state.health && state.health.bob_ide;
     box.innerHTML = `
-      <p class="card-note" style="margin-top:0">This clone is ready for Bob IDE: the same <strong>${esc(h.skills.length)} skills</strong>, a <strong>Codebase Q&amp;A</strong> mode, and every file Bob wrote in <code>onboarding/</code>.</p>
+      <p class="card-note" style="margin-top:0">This clone is ready for Bob IDE: the same <strong>${esc(h.skills.length)} skills</strong>, a <strong>Codebase Q&amp;A</strong> mode, and every file Bob wrote in <code>onboarding/</code>. ${h.installed.includes(".bobignore") ? `Secret files (keys, certificates, credentials) are hidden from Bob by <code>.bobignore</code>.` : ""}</p>
       <div class="confirm-actions" style="margin-bottom:12px">
         <button class="btn btn-primary" type="button" id="openBob" ${launcher ? "" : "disabled title=\"Bob IDE launcher not found on this computer\""}>Open in Bob IDE <span class="button-arrow">↗</span></button>
         <button class="btn btn-ghost" type="button" id="copyPath">Copy folder path</button>

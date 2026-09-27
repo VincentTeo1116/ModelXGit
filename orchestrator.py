@@ -532,6 +532,31 @@ CODEBASE_QA_MODE = """customModes:
 """
 
 
+BOBIGNORE = """# Added by the Model X onboarding backend: Bob must never read secret files.
+# The local secret scanners still check them; only their masked results reach Bob.
+.env
+.env.*
+!.env.example
+!.env.sample
+!.env.template
+*.env
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+id_rsa*
+id_ed25519*
+credentials.json
+*serviceAccount*.json
+*service-account*.json
+.npmrc
+.pypirc
+.netrc
+"""
+
+
 def install_bob_ide_files(repo_dir: Path, registry: "SkillRegistry") -> Dict[str, Any]:
     """Copy our skills and the Codebase Q&A mode into the clone's .bob/, so the developer can
     continue in Bob IDE with them. Never overwrites .bob/ files the repository itself tracks.
@@ -556,6 +581,11 @@ def install_bob_ide_files(repo_dir: Path, registry: "SkillRegistry") -> Dict[str
     else:
         (repo_dir / MODES_FILE).write_text(CODEBASE_QA_MODE, encoding="utf-8")
         installed.append(MODES_FILE)
+    # Hide secret files from Bob. A repo's own .bobignore is kept and ours is appended.
+    own = (_git(["show", "HEAD:.bobignore"], cwd=repo_dir).stdout
+           if _git(["ls-files", "--error-unmatch", ".bobignore"], cwd=repo_dir).returncode == 0 else "")
+    (repo_dir / ".bobignore").write_text((own.rstrip("\n") + "\n\n" if own else "") + BOBIGNORE, encoding="utf-8")
+    installed.append(".bobignore")
     return {
         "workspace_path": str(repo_dir.resolve()),
         "skills": sorted({p.split("/")[2] for p in installed + kept if p.startswith(".bob/skills/")}),
