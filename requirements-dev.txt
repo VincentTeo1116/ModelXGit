@@ -1,0 +1,2 @@
+# For the test suite only (pytest tests/).
+pytest==9.1.1
