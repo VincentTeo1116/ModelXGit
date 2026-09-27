@@ -14,17 +14,18 @@ Run:  uvicorn main:app --port 8000
                                                 codebase-qa body: {"role": "...", "question": "..."}
   GET  /api/repos/{repo_id}/files               files the skills wrote (onboarding/, README.md)
   GET  /api/repos/{repo_id}/files/{path}        one of those files
+  POST /api/repos/{repo_id}/open-in-bob         open the clone in Bob IDE (only from this computer)
 """
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 import config
-from bob_integration import make_bob_client
+from bob_integration import find_bob_ide, make_bob_client, open_in_bob_ide
 from orchestrator import (
     ConflictError, Job, Orchestrator, SkillRegistry, SkillTrigger, is_output_path, normalize_repo_url,
 )
@@ -67,6 +68,7 @@ def health():
         "bob_client": bob.kind,
         "bob_configured": bob.configured,
         "bob_url": bob.url,
+        "bob_ide": bool(find_bob_ide()),
         "workspace": str(config.WORKSPACE),
         "skills": len(registry.skills),
         "warnings": registry.warnings,
@@ -175,6 +177,25 @@ def get_file(repo_id: str, file_path: str):
     if not target.is_file():
         raise HTTPException(404, "File not found")
     return target.read_text(encoding="utf-8", errors="replace")
+
+
+LOCAL_HOSTS = {"127.0.0.1", "::1", "localhost"}
+
+
+@app.post("/api/repos/{repo_id}/open-in-bob")
+def open_in_bob(repo_id: str, request: Request):
+    """Continue in Bob IDE: open the clone, which has our skills and the Codebase Q&A mode in .bob/."""
+    job = _job_for_repo(repo_id)
+    if not job.repo.cloned:
+        raise HTTPException(409, "The repository isn't cloned yet (or the clone failed).")
+    if not request.client or request.client.host not in LOCAL_HOSTS:
+        raise HTTPException(403, "Bob IDE can only be opened from the computer running the backend.")
+    folder = orchestrator.repo_dir(job)
+    try:
+        open_in_bob_ide(folder)
+    except RuntimeError as e:
+        raise HTTPException(404, str(e))
+    return {"opened": str(folder.resolve())}
 
 
 # The web app (frontend/), served at / . Mounted last so every /api route wins.

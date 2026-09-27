@@ -148,3 +148,22 @@ class HttpBobClient:
 
 def make_bob_client():
     return HttpBobClient() if config.BOB_CLIENT == "http" else BobShellClient()
+
+
+def find_bob_ide() -> Optional[str]:
+    """The Bob IDE command-line launcher (`bobide`), used to open a clone in Bob IDE."""
+    candidates = [config.BOB_IDE_CMD, shutil.which("bobide")]
+    if os.name == "nt" and os.getenv("LOCALAPPDATA"):
+        candidates.append(str(Path(os.environ["LOCALAPPDATA"]) / "Programs" / "IBM Bob" / "bin" / "bobide.cmd"))
+    candidates.append("/Applications/IBM Bob.app/Contents/Resources/app/bin/bobide")
+    return next((c for c in candidates if c and Path(c).is_file()), None)
+
+
+def open_in_bob_ide(folder: Path) -> None:
+    """Open a folder in Bob IDE on this computer (detached, so the backend doesn't wait)."""
+    ide = find_bob_ide()
+    if not ide:
+        raise RuntimeError("Bob IDE launcher not found: install IBM Bob or set BOB_IDE_CMD.")
+    flags = getattr(subprocess, "DETACHED_PROCESS", 0) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+    subprocess.Popen([ide, str(folder)], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                     stderr=subprocess.DEVNULL, close_fds=True, creationflags=flags)

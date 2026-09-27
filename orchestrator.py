@@ -105,6 +105,7 @@ class Job(BaseModel):
     repo_id: str
     status: JobStatus = JobStatus.queued
     repo: RepoInfo
+    bob_ide: Optional[Dict[str, Any]] = None  # what was installed in the clone's .bob/ for Bob IDE
     steps: Dict[str, JobStep] = Field(default_factory=dict)
     created_at: float
     updated_at: float
@@ -467,9 +468,10 @@ def shell_prompt(skill: "SkillInfo", has_question: bool) -> str:
     )
 
 
-def contain_workspace(repo_dir: Path) -> List[str]:
+def contain_workspace(repo_dir: Path, keep: frozenset = frozenset()) -> List[str]:
     """Undo every change outside onboarding/ and README.md (Bob may only write there).
-    Includes git-ignored files (e.g. a new .env): a fresh clone has none, so any are Bob's."""
+    Includes git-ignored files (e.g. a new .env): a fresh clone has none, so any are Bob's.
+    `keep`: files the backend itself added (the Bob IDE hand-off in .bob/)."""
     out = _git(["status", "--porcelain", "-uall", "--ignored=matching", "-z"], cwd=repo_dir).stdout
     root = repo_dir.resolve()
     entries, reverted, i = out.split("\0"), [], 0
@@ -484,7 +486,7 @@ def contain_workspace(repo_dir: Path) -> List[str]:
             paths.append(entries[i])
             i += 1
         for p in paths:
-            if p == "README.md" or p.startswith("onboarding/"):
+            if p == "README.md" or p.startswith("onboarding/") or p in keep:
                 continue
             target = (root / p).resolve()
             if root not in target.parents or ".git" in Path(p).parts:
@@ -497,6 +499,66 @@ def contain_workspace(repo_dir: Path) -> List[str]:
                 target.unlink()  # a new file, ignored or not
             reverted.append(p.rstrip("/"))
     return sorted(set(reverted))
+
+
+# ---- Bob IDE hand-off: the clone opens in Bob IDE with our skills and a Q&A mode ------
+MODES_FILE = ".bob/custom_modes.yaml"
+CODEBASE_QA_MODE = """customModes:
+  - slug: codebase-qa
+    name: Codebase Q&A
+    description: Role-based Q&A about this repo, starting from the onboarding results.
+    roleDefinition: |
+      You are a senior engineer onboarding a new developer to this repository.
+      You tailor everything to the developer's role (Frontend, Backend, Full Stack,
+      Database, AI/ML, QA/Testing, DevOps).
+    customInstructions: |
+      - Start from the onboarding results in onboarding/ if they exist (CODEBASE_MAP.md,
+        tech_stack.md, architecture.md, setup_report.md, the secrets reports), then open
+        the real files. Base every answer on the real code, not only on those notes.
+      - If the developer hasn't said their role, ask for it in one short question.
+      - With a role and a question, answer the question from that role's point of view.
+        Give a full role briefing only when asked for one.
+      - Start with a short, direct answer, then the details, citing file paths and line ranges.
+      - If something isn't in the code, say "not found in this repo". Never guess or invent.
+      - Never reveal secret values.
+      - End with "Read next:" (1-2 files) and 2-3 suggested follow-up questions.
+      - Do not modify any files.
+    groups:
+      - read
+"""
+
+
+def install_bob_ide_files(repo_dir: Path, registry: "SkillRegistry") -> Dict[str, Any]:
+    """Copy our skills and the Codebase Q&A mode into the clone's .bob/, so the developer can
+    continue in Bob IDE with them. Never overwrites .bob/ files the repository itself tracks.
+    Safe to call again: it restores the files if anything changed them."""
+    tracked = set(_git(["ls-files", ".bob"], cwd=repo_dir).stdout.splitlines())
+    installed, kept = [], []
+    for skill in sorted(registry.skills.values(), key=lambda s: s.name):
+        src_dir = Path(skill.path).parent
+        for src in sorted(src_dir.rglob("*")):
+            if not src.is_file() or "__pycache__" in src.parts:
+                continue
+            rel = f".bob/skills/{skill.name}/{src.relative_to(src_dir).as_posix()}"
+            if rel in tracked:
+                kept.append(rel)
+                continue
+            dst = repo_dir / rel
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(src, dst)
+            installed.append(rel)
+    if MODES_FILE in tracked:
+        kept.append(MODES_FILE)
+    else:
+        (repo_dir / MODES_FILE).write_text(CODEBASE_QA_MODE, encoding="utf-8")
+        installed.append(MODES_FILE)
+    return {
+        "workspace_path": str(repo_dir.resolve()),
+        "skills": sorted({p.split("/")[2] for p in installed + kept if p.startswith(".bob/skills/")}),
+        "modes": ["codebase-qa"],
+        "installed": installed,
+        "kept_repo_files": kept,
+    }
 
 
 def collect_outputs(repo_dir: Path, skill: "SkillInfo", since: float) -> List[str]:
@@ -605,6 +667,10 @@ class Orchestrator:
             job.repo.commit, job.repo.commits = facts["commit"], facts["commits"]
             job.repo.facts = facts["facts"]
             job.repo.branch = job.repo.branch or facts["branch"]
+            try:  # a hand-off problem must never stop the onboarding
+                job.bob_ide = await asyncio.to_thread(install_bob_ide_files, dest, self.registry)
+            except Exception as e:
+                job.bob_ide = {"error": f"Couldn't prepare the Bob IDE hand-off: {e}"}
         except Exception as e:
             self._update(job, clone_step, status=StepStatus.failed, error=str(e), finished_at=time.time())
             for name, step in job.steps.items():
@@ -702,7 +768,10 @@ class Orchestrator:
         answer_mode = bool(user_input)
         async with self._bob_slots:
             result = await asyncio.to_thread(self.bob.run_prompt, shell_prompt(skill, answer_mode), repo_dir)
-        reverted = await asyncio.to_thread(contain_workspace, repo_dir)
+        handoff = frozenset((job.bob_ide or {}).get("installed", []))
+        reverted = await asyncio.to_thread(contain_workspace, repo_dir, handoff)
+        if handoff:  # undo any edit Bob made to the hand-off files
+            await asyncio.to_thread(install_bob_ide_files, repo_dir, self.registry)
         written = await asyncio.to_thread(collect_outputs, repo_dir, skill, started)
 
         text = result["text"].strip()

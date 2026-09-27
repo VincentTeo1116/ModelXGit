@@ -243,6 +243,8 @@ code { font-family: var(--mono); font-size: .92em; }
 .file-chip { display: inline-block; margin: 2px 6px 2px 0; padding: 3px 8px; border: 0; border-radius: 6px; background: var(--lavender); color: var(--purple); font: 11px var(--mono); cursor: pointer; }
 .file-chip:hover { background: #e3dffe; }
 
+.ide-card { border-color: #dcd6ff; background: linear-gradient(180deg, #faf9ff, var(--white) 60%); }
+
 /* Q&A */
 .qa-controls { display: grid; grid-template-columns: 150px minmax(0, 1fr); gap: 10px; }
 .qa-controls textarea { grid-column: 1 / -1; min-height: 76px; padding: 11px 12px; border: 1px solid #dedde7; border-radius: 10px; resize: vertical; font-size: 13px; line-height: 1.5; }

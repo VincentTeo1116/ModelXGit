@@ -465,6 +465,10 @@ views.job = async (view, jobId) => {
         <div class="steps" id="steps"></div>
       </section>
       <div class="stack">
+        <section class="card ide-card" id="ideCard">
+          <div class="card-title-row"><h2 class="card-title">Continue in Bob IDE</h2><span class="badge neutral">.bob/</span></div>
+          <div id="ideBox"></div>
+        </section>
         <section class="card" id="qaCard">
           <div class="card-title-row"><h2 class="card-title">Ask Bob about this repo</h2><span class="badge neutral">codebase-qa</span></div>
           <form id="qaForm" class="qa-controls">
@@ -588,6 +592,22 @@ views.job = async (view, jobId) => {
       ${!ready && !running ? `<p class="qa-hint" style="margin:10px 0 0">Available when the skills above have succeeded.</p>` : ""}`;
   };
 
+  const renderIde = () => {
+    const h = job.bob_ide;
+    const box = $("#ideBox");
+    if (!job.repo.cloned || !h) { box.innerHTML = `<p class="card-note" style="margin:0">Available once the repository is cloned.</p>`; return; }
+    if (h.error) { box.innerHTML = `<div class="step-error">${esc(h.error)}</div>`; return; }
+    const launcher = state.health && state.health.bob_ide;
+    box.innerHTML = `
+      <p class="card-note" style="margin-top:0">This clone is ready for Bob IDE: the same <strong>${esc(h.skills.length)} skills</strong>, a <strong>Codebase Q&amp;A</strong> mode, and every file Bob wrote in <code>onboarding/</code>.</p>
+      <div class="confirm-actions" style="margin-bottom:12px">
+        <button class="btn btn-primary" type="button" id="openBob" ${launcher ? "" : "disabled title=\"Bob IDE launcher not found on this computer\""}>Open in Bob IDE <span class="button-arrow">↗</span></button>
+        <button class="btn btn-ghost" type="button" id="copyPath">Copy folder path</button>
+      </div>
+      <div class="kv" style="margin-bottom:10px">${h.skills.map((n) => `<span class="accent">/${esc(n)}</span>`).join("")}</div>
+      <p class="qa-hint" style="margin:0">In Bob IDE, pick <strong>Codebase Q&amp;A</strong> in the mode list, or type a skill such as <code>/codebase-qa</code> in the chat. Folder: <code>${esc(h.workspace_path)}</code>${h.kept_repo_files.length ? ` · kept ${esc(h.kept_repo_files.length)} existing .bob file(s) from the repo` : ""}</p>`;
+  };
+
   // ---- files
   let fileSig = "";
   const fileIcon = (f) => (f.endsWith(".json") ? "{ }" : f.endsWith(".mmd") ? "◇" : "¶");
@@ -654,6 +674,12 @@ views.job = async (view, jobId) => {
     } else if (sugg) {
       $("#qaInput").value = sugg.textContent;
       $("#qaInput").focus();
+    } else if (e.target.closest("#openBob")) {
+      try { await api(`/api/repos/${encodeURIComponent(job.repo_id)}/open-in-bob`, { method: "POST" }); toast("Opening Bob IDE…", "ok"); }
+      catch (ex) { toast(ex.message, "bad"); }
+    } else if (e.target.closest("#copyPath")) {
+      try { await navigator.clipboard.writeText(job.bob_ide.workspace_path); toast("Folder path copied", "ok"); }
+      catch { toast(job.bob_ide.workspace_path); }
     } else if (e.target.id === "readmeRun") {
       e.target.disabled = true;
       try { await api(`/api/repos/${encodeURIComponent(job.repo_id)}/skills/readme-generator/run`, { method: "POST" }); toast("Generating README…"); poll(); }
@@ -681,7 +707,7 @@ views.job = async (view, jobId) => {
   // ---- live updates
   let finishedSig = "";
   const renderAll = () => {
-    renderHead(); renderSteps(); renderChat(); renderReadme();
+    renderHead(); renderSteps(); renderIde(); renderChat(); renderReadme();
     const sig = Object.values(job.steps).map((s) => s.status + (s.files_written || []).length).join("|");
     if (sig !== finishedSig) { finishedSig = sig; renderFileList(); }
   };

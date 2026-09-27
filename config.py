@@ -33,8 +33,12 @@ BOB_ACCEPT_LICENSE = _bool("BOB_ACCEPT_LICENSE")     # set to true only after ac
 BOB_MAX_TURNS = _int("BOB_MAX_TURNS", 30)
 BOB_MAX_COST = os.getenv("BOB_MAX_COST", "")         # per skill run, empty = no limit
 BOB_SHELL_TIMEOUT = _int("BOB_SHELL_TIMEOUT", 900)
-# Bob may read and edit files, but not run commands, browse or use MCP servers.
-BOB_DISABLED_TOOL_GROUPS = os.getenv("BOB_DISABLED_TOOL_GROUPS", "execute,browser,mcp,subagent")
+# Pipeline runs may read and edit files only: no commands, browsing, MCP servers, sub-agents,
+# other skills or mode switches (the clone's .bob/ holds skills and modes for Bob IDE).
+BOB_DISABLED_TOOL_GROUPS = os.getenv("BOB_DISABLED_TOOL_GROUPS", "execute,browser,mcp,subagent,skill,mode")
+
+# Bob IDE hand-off: the `bobide` launcher; auto-detected when empty.
+BOB_IDE_CMD = os.getenv("BOB_IDE_CMD", "")
 
 # Direct HTTP (BOB_CLIENT=http)
 BOB_API_ENDPOINT = os.getenv("BOB_API_ENDPOINT", "https://api.us-east.bob.ibm.com").rstrip("/")
