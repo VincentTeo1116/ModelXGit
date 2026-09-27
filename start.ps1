@@ -1,8 +1,9 @@
 <#
   RepoPilot (Model X): one-command start on Windows.
 
-    powershell -ExecutionPolicy Bypass -File start.ps1            # real Bob if .env has BOB_API_KEY, else the stand-in
-    powershell -ExecutionPolicy Bypass -File start.ps1 -StandIn   # always the labelled stand-in (no key needed)
+    Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+    .\start.ps1                 # real Bob if .env has BOB_API_KEY, else the stand-in
+    .\start.ps1 -StandIn        # always the labelled stand-in (no key needed)
 
   Then open http://127.0.0.1:8000/ (it opens by itself unless -NoBrowser).
 #>
@@ -10,9 +11,24 @@ param([switch]$StandIn, [int]$Port = 8000, [switch]$NoBrowser)
 $ErrorActionPreference = "Stop"
 Set-Location $PSScriptRoot
 
+$bootstrapPython = (Get-Command python -ErrorAction SilentlyContinue).Source
+if ($bootstrapPython) {
+    & $bootstrapPython --version *> $null
+    if ($LASTEXITCODE -ne 0) { $bootstrapPython = $null }
+}
+if (-not $bootstrapPython) {
+    $bootstrapPython = (Get-Command py -ErrorAction SilentlyContinue).Source
+}
+if (-not $bootstrapPython) {
+    throw "Python 3.10 or newer was not found. Install Python and reopen PowerShell."
+}
+
 if (-not (Test-Path ".venv\Scripts\python.exe")) {
     Write-Host "Creating .venv ..."
-    python -m venv .venv
+    & $bootstrapPython -m venv .venv
+    if ($LASTEXITCODE -ne 0 -or -not (Test-Path ".venv\Scripts\python.exe")) {
+        throw "Could not create .venv. Check that your Python installation includes the venv module."
+    }
 }
 $py = Join-Path $PSScriptRoot ".venv\Scripts\python.exe"
 Write-Host "Installing requirements ..."
