@@ -606,27 +606,57 @@ OUTPUT_CONTRACTS: Dict[str, Dict[str, type]] = {
     "onboarding/secrets_history.json": {"summary": dict, "findings": list},
     "onboarding/secrets_precommit.json": {"summary": dict, "gitignore_status": dict, "findings": list, "hook": dict},
 }
-_scan_line = None
+_patterns_module = None
 
 
-def _secret_scanner():
-    """Our own scanner rules (skills/secret-precommit-scanner), to catch unmasked values."""
-    global _scan_line
-    if _scan_line is None:
+def _patterns():
+    """Our own scanner rules (skills/secret-precommit-scanner/scripts/secret_patterns.py)."""
+    global _patterns_module
+    if _patterns_module is None:
         import importlib.util
         path = config.SKILLS_DIR / "secret-precommit-scanner" / "scripts" / "secret_patterns.py"
         spec = importlib.util.spec_from_file_location("modelx_secret_patterns", path)
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
-        _scan_line = module.scan_line
-    return _scan_line
+        _patterns_module = module
+    return _patterns_module
+
+
+def mask_secrets(text: str) -> Tuple[str, int]:
+    """Mask every secret-looking value (first 5 characters + ...[masked]); placeholders stay."""
+    mod, count = _patterns(), 0
+    for name, rx in mod.PATTERNS:
+        def repl(m, name=name):
+            nonlocal count
+            val = m.group(m.lastindex) if (name == "Hardcoded secret assignment" and m.lastindex) else m.group(0)
+            if mod.is_placeholder(val) or "[masked]" in m.group(0):
+                return m.group(0)
+            count += 1
+            return m.group(0).replace(val, mod.mask(val))
+        text = rx.sub(repl, text)
+    return text, count
+
+
+def mask_output_files(repo_dir: Path, files: List[str]) -> Dict[str, int]:
+    """Enforce 'no secrets in outputs': mask values in the files Bob wrote, in place."""
+    masked = {}
+    for rel in files:
+        path = repo_dir / rel
+        if not path.is_file():
+            continue
+        text = path.read_text(encoding="utf-8", errors="replace")
+        new, n = mask_secrets(text)
+        if n:
+            path.write_text(new, encoding="utf-8")
+            masked[rel] = n
+    return masked
 
 
 def validate_output(rel: str, text: str) -> List[str]:
     """Problems with one output file ([] = valid). Checks JSON shape and unmasked secrets."""
     problems: List[str] = []
     try:
-        scan = _secret_scanner()
+        scan = _patterns().scan_line
         leaks = {kind for line in text.splitlines() for kind, _ in scan(line)}
         if leaks:
             problems.append(f"possible unmasked secret ({', '.join(sorted(leaks))})")
@@ -737,6 +767,7 @@ def compute_metrics(job: "Job", pipeline: List[str]) -> Dict[str, Any]:
         },
         "files_produced": len(files),
         "files": files,
+        "values_masked_in_outputs": sum(sum(((s.output or {}).get("auto_masked") or {}).values()) for s in steps.values()),
         "outputs_checked": len(checks),
         "outputs_valid": sum(1 for p in checks.values() if not p),
         "output_problems": {f: p for f, p in checks.items() if p},
@@ -1022,7 +1053,12 @@ class Orchestrator:
                         )
             if tools is not None:
                 output["scanner"] = summarize_tools(tools)  # counts only, for the impact metrics
-            if written:  # the output contract: shape of the JSON files, no unmasked secrets
+            if written:  # no secrets in outputs (enforced), then the output contract
+                masked = await asyncio.to_thread(mask_output_files, self.repo_dir(job), written)
+                if masked:
+                    output["auto_masked"] = masked
+                    output.setdefault("warnings", []).append(
+                        f"Masked {sum(masked.values())} secret-looking value(s) Bob wrote in: {', '.join(masked)}")
                 checks = await asyncio.to_thread(validate_outputs, self.repo_dir(job), written)
                 output["validation"] = checks
                 bad = {f: p for f, p in checks.items() if p}

@@ -40,7 +40,7 @@ def is_lockfile(path):
 PLACEHOLDER_MARKERS = re.compile(r"<[^>]*>|\$\{[^}]*\}|%[A-Z0-9_]+%|process\.env|import\.meta\.env|os\.environ")
 PLACEHOLDER_WORDS = re.compile(
     r"(?i)^(your|example|dummy|change[_\-]?me|placeholder|replace[_\-]?me)([_\-.\s].*|[a-z_\-.\s]*)$")
-PLACEHOLDER_FILL = re.compile(r"(?i)^[x*_.\-]{3,}$")
+PLACEHOLDER_FILL = re.compile(r"(?i)^([a-z]{1,6}[_\-])?[x*_.\-]{3,}$")  # xxxx, sk-XXXXXXXX, ghp_****
 
 
 def is_placeholder(value):
