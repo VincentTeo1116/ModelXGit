@@ -164,10 +164,14 @@ async function refreshHealth() {
   try {
     const h = await api("/api/health");
     state.health = h;
-    const local = /127\.0\.0\.1|localhost/.test(h.bob_url || "");
-    if (!h.bob_configured) { cls = "warn"; title = "Bob key missing"; sub = "Add BOB_API_KEY to .env"; pillText = "Backend up · no Bob key"; }
+    const shell = h.bob_client === "shell";
+    const local = !shell && /127\.0\.0\.1|localhost/.test(h.bob_url || "");
+    if (!h.bob_configured) {
+      cls = "warn"; pillText = "Backend up · Bob not ready";
+      [title, sub] = shell && /not found/.test(h.bob_url) ? ["Bob Shell missing", "npm install -g bobshell"] : ["Bob key missing", "Add BOB_API_KEY to .env"];
+    }
     else if (local) { cls = "warn"; title = "Bob stand-in"; sub = "Local test API, not real Bob"; pillText = "Backend up · Bob stand-in"; }
-    else { cls = "ok"; title = "Bob connected"; sub = new URL(h.bob_url).host; pillText = "All systems ready"; }
+    else { cls = "ok"; title = "Bob connected"; sub = shell ? "via IBM Bob Shell" : h.bob_url.replace(/^https?:\/\//, "").split("/")[0]; pillText = "All systems ready"; }
     if (h.warnings && h.warnings.length) { cls = "warn"; sub = `${h.warnings.length} config warning(s)`; }
   } catch {
     state.health = null;
@@ -306,7 +310,7 @@ views.home = async (view) => {
       <ul>
         <li>The backend clones the repository, then Bob writes the clone report.</li>
         <li>These run automatically with Bob: ${autoSkills.map((s) => `<strong>${esc(skillName(s))}</strong>`).join(", ")}.</li>
-        <li>The repository's code is sent to the Bob API. <code>.env</code> files, keys and lockfiles are never sent.</li>
+        <li>Bob reads the cloned code (IBM Bob). It can't run commands and may only write to <code>onboarding/</code> and <code>README.md</code>; anything else it changes is undone.</li>
       </ul>
       <div class="confirm-actions">
         <button class="btn btn-primary" id="confirmClone" type="button">Clone and run skills</button>
@@ -403,10 +407,10 @@ views.settings = async (view) => {
     </div>
     <div class="card" style="margin-top:18px">
       <div class="card-title-row"><h2 class="card-title">Connect the real Bob API</h2></div>
-      <p class="card-note">Create <code>.env</code> next to <code>main.py</code> and restart the backend. Get the endpoint and path from the hackathon organisers.</p>
-      <div class="md"><pre><code>BOB_API_KEY=your key
-BOB_API_ENDPOINT=https://…
-BOB_SKILLS_PATH=/…</code></pre></div>
+      <p class="card-note">The backend runs each skill with IBM Bob Shell (<code>npm install -g bobshell</code>). Create <code>.env</code> next to <code>main.py</code> and restart the backend. Create the key at bob.ibm.com → API keys; set BOB_ACCEPT_LICENSE only after reading the license (<code>bob --show-license</code>).</p>
+      <div class="md"><pre><code>BOB_CLIENT=shell
+BOB_API_KEY=your key
+BOB_ACCEPT_LICENSE=true</code></pre></div>
     </div>
     ${footerHtml()}`;
   $("#apiBase").value = state.apiBase;
@@ -419,7 +423,7 @@ BOB_SKILLS_PATH=/…</code></pre></div>
     $("#healthFacts").innerHTML = `
       <dl class="facts-list">
         <dt>Bob key</dt><dd>${h.bob_configured ? "set" : "missing"}</dd>
-        <dt>Bob endpoint</dt><dd>${esc(h.bob_url)}</dd>
+        <dt>Bob connection</dt><dd>${esc(h.bob_client === "shell" ? "IBM Bob Shell (headless)" : "HTTP")} · ${esc(h.bob_url)}</dd>
         <dt>Skills loaded</dt><dd>${esc(h.skills)}</dd>
         <dt>Clone folder</dt><dd>${esc(h.workspace)}</dd>
       </dl>
@@ -522,6 +526,7 @@ views.job = async (view, jobId) => {
         ${open ? `<div class="step-body">
           <div><h4>Skill</h4><code>${esc(name)}</code></div>
           ${out.summary ? `<div><h4>Bob's summary</h4><div class="md">${md(out.summary)}</div></div>` : ""}
+          ${out.stats ? `<div class="step-sub">Bob run: ${esc(out.stats.tool_calls ?? "?")} tool calls · ${esc(((out.stats.duration_ms || 0) / 1000).toFixed(1))}s · cost ${esc(out.stats.session_costs ?? "?")}</div>` : ""}
           ${s.error ? `<div class="step-error">${esc(s.error)}</div>` : ""}
           ${out.actions_for_user && out.actions_for_user.length ? `<div><h4>Needs your action</h4><ul>${out.actions_for_user.map((a) => `<li>${esc(a)}</li>`).join("")}</ul></div>` : ""}
           ${out.warnings && out.warnings.length ? `<div><h4>Warnings</h4><ul>${out.warnings.map((w) => `<li>${esc(w)}</li>`).join("")}</ul></div>` : ""}

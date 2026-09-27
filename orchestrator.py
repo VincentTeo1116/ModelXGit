@@ -26,7 +26,7 @@ import yaml
 from pydantic import BaseModel, Field
 
 import config
-from bob_integration import BobClient
+from bob_integration import BobShellClient, HttpBobClient
 
 CLONE_EVENT = "repo-clone"
 
@@ -384,8 +384,12 @@ def run_local_tools(skill: SkillInfo, repo_dir: Path) -> Dict[str, Any]:
 OUTPUT_PATH = re.compile(r"^(onboarding/[A-Za-z0-9._\-/]+|README\.md)$")
 
 
+CONTEXT_DIR = "onboarding/.context"  # Bob Shell's per-skill instructions + context (not an output)
+
+
 def is_output_path(rel: str) -> bool:
-    return bool(OUTPUT_PATH.match(rel)) and ".." not in rel.split("/")
+    return (bool(OUTPUT_PATH.match(rel)) and ".." not in rel.split("/")
+            and not rel.startswith(CONTEXT_DIR + "/"))
 
 
 def write_outputs(repo_dir: Path, files: Dict[str, Any]) -> Tuple[List[str], List[str]]:
@@ -402,6 +406,67 @@ def write_outputs(repo_dir: Path, files: Dict[str, Any]) -> Tuple[List[str], Lis
         target.write_text(text, encoding="utf-8")
         written.append(rel)
     return written, rejected
+
+
+# ---- Bob Shell: Bob works inside the clone ----------------------------------------
+SHELL_PROMPT = """You are running the onboarding skill "{name}" for a backend service. Nobody can answer questions.
+1. Read and follow the skill instructions in {ctx}/{name}.SKILL.md.
+2. Read {ctx}/{name}.context.json: clone facts, results of the scripts the skill mentions (already run: use them, do not run scripts), earlier skills' results, and the developer's input.
+3. Only create or edit files under onboarding/{readme}. Never change any other file and never touch {ctx}/.
+4. Never write secret values: mask them. Where the skill says to ask the user, install, run, rewrite history, push or open pages, do not do it: note it for the developer instead.
+5. Save these files: {files}.
+{finish}"""
+FINISH_SUMMARY = "6. Finish with a short plain-text summary (3-5 lines) of what you found and anything the developer must act on."
+FINISH_ANSWER = "6. Finish with your full answer to the developer's question (Markdown), ending with \"Read next:\" and 1-2 files."
+
+
+def write_skill_bundle(repo_dir: Path, skill: "SkillInfo", skill_md: str, context: Dict[str, Any]):
+    """Instructions + context as files in the clone, so the prompt stays short."""
+    ctx_dir = repo_dir / CONTEXT_DIR
+    ctx_dir.mkdir(parents=True, exist_ok=True)
+    (ctx_dir / f"{skill.name}.SKILL.md").write_text(skill_md, encoding="utf-8")
+    (ctx_dir / f"{skill.name}.context.json").write_text(
+        json.dumps(context, indent=2, ensure_ascii=False, default=str), encoding="utf-8")
+
+
+def shell_prompt(skill: "SkillInfo", has_question: bool) -> str:
+    return SHELL_PROMPT.format(
+        name=skill.name, ctx=CONTEXT_DIR,
+        readme=" and README.md" if "README.md" in skill.produces else "",
+        files=", ".join(skill.produces) or "none",
+        finish=FINISH_ANSWER if has_question else FINISH_SUMMARY,
+    )
+
+
+def contain_workspace(repo_dir: Path) -> List[str]:
+    """Undo every change outside onboarding/ and README.md (Bob may only write there)."""
+    out = _git(["status", "--porcelain", "-uall", "-z"], cwd=repo_dir).stdout
+    entries, reverted, i = out.split("\0"), [], 0
+    while i < len(entries):
+        entry = entries[i]
+        i += 1
+        if len(entry) < 4:
+            continue
+        code, path = entry[:2], entry[3:]
+        paths = [path]
+        if code[0] in "RC" and i < len(entries):  # rename/copy: the next entry is the source
+            paths.append(entries[i])
+            i += 1
+        for p in paths:
+            if p == "README.md" or p.startswith("onboarding/"):
+                continue
+            if _git(["ls-files", "--error-unmatch", p], cwd=repo_dir).returncode == 0:
+                _git(["checkout", "HEAD", "--", p], cwd=repo_dir)  # restore a tracked file
+            elif (repo_dir / p).is_file():
+                (repo_dir / p).unlink()  # remove a new file
+            reverted.append(p)
+    return sorted(set(reverted))
+
+
+def collect_outputs(repo_dir: Path, skill: "SkillInfo", since: float) -> List[str]:
+    """The skill's declared files that Bob wrote during this run."""
+    return [rel for rel in skill.produces
+            if (repo_dir / rel).is_file() and (repo_dir / rel).stat().st_mtime >= since - 1]
 
 
 RULES = [
@@ -432,7 +497,7 @@ ACTIVE = (StepStatus.pending, StepStatus.running)
 
 
 class Orchestrator:
-    def __init__(self, registry: SkillRegistry, bob: BobClient):
+    def __init__(self, registry: SkillRegistry, bob: "BobShellClient | HttpBobClient"):
         self.registry = registry
         self.bob = bob
         self.jobs: Dict[str, Job] = {}         # job_id -> job (in memory)
@@ -560,17 +625,20 @@ class Orchestrator:
         run = StepRun(input=user_input, status=StepStatus.running, started_at=started)
         written: List[str] = []
         try:
-            context = await self._context(job, skill, mode, user_input)
             skill_md = Path(skill.path).read_text(encoding="utf-8")
-            async with self._bob_slots:
-                output = await self.bob.run_skill(skill.name, skill_md, context)
-            files = output.get("files")
-            if isinstance(files, dict) and files:
-                written, rejected = await asyncio.to_thread(write_outputs, self.repo_dir(job), files)
-                if rejected:
-                    output.setdefault("warnings", []).append(
-                        f"Ignored files outside onboarding/ and README.md: {rejected}"
-                    )
+            if self.bob.reads_workspace:
+                output, written = await self._run_with_shell(job, skill, mode, user_input, skill_md, started)
+            else:
+                context = await self._context(job, skill, mode, user_input)
+                async with self._bob_slots:
+                    output = await self.bob.run_skill(skill.name, skill_md, context)
+                files = output.get("files")
+                if isinstance(files, dict) and files:
+                    written, rejected = await asyncio.to_thread(write_outputs, self.repo_dir(job), files)
+                    if rejected:
+                        output.setdefault("warnings", []).append(
+                            f"Ignored files outside onboarding/ and README.md: {rejected}"
+                        )
             run.status, run.output = StepStatus.success, output
         except Exception as e:
             error = str(e)
@@ -586,26 +654,54 @@ class Orchestrator:
             files_written=sorted(set(step.files_written) | set(written)), finished_at=run.finished_at,
         )
 
+    async def _run_with_shell(
+        self, job: Job, skill: SkillInfo, mode: str, user_input: Optional[Dict[str, Any]],
+        skill_md: str, started: float,
+    ) -> Tuple[Dict[str, Any], List[str]]:
+        """Bob Shell works in the clone: it reads the code and writes onboarding/ itself."""
+        repo_dir = self.repo_dir(job)
+        context = await self._context(job, skill, mode, user_input, include_repo=False)
+        await asyncio.to_thread(write_skill_bundle, repo_dir, skill, skill_md, context)
+        answer_mode = bool(user_input)
+        async with self._bob_slots:
+            result = await asyncio.to_thread(self.bob.run_prompt, shell_prompt(skill, answer_mode), repo_dir)
+        reverted = await asyncio.to_thread(contain_workspace, repo_dir)
+        written = await asyncio.to_thread(collect_outputs, repo_dir, skill, started)
+
+        text = result["text"].strip()
+        output: Dict[str, Any] = {"summary": text, "stats": result["stats"]}
+        if answer_mode:
+            output["answer"] = text
+        warnings = []
+        if reverted:
+            warnings.append(f"Undid changes outside onboarding/ and README.md: {reverted}")
+        missing = [f for f in skill.produces if f not in written and not (repo_dir / f).is_file()]
+        if missing:
+            warnings.append(f"Bob did not write: {missing}")
+        if warnings:
+            output["warnings"] = warnings
+        return output, written
+
     async def _context(
-        self, job: Job, skill: SkillInfo, mode: str, user_input: Optional[Dict[str, Any]]
+        self, job: Job, skill: SkillInfo, mode: str, user_input: Optional[Dict[str, Any]],
+        include_repo: bool = True,
     ) -> Dict[str, Any]:
         context: Dict[str, Any] = {
-            "orchestrator": {
-                "mode": mode,
-                "rules": RULES,
-                "response_format": RESPONSE_FORMAT,
-                "expected_files": skill.produces,
-            },
+            "orchestrator": (
+                {"mode": mode, "rules": RULES, "response_format": RESPONSE_FORMAT, "expected_files": skill.produces}
+                if include_repo else {"mode": mode, "expected_files": skill.produces}
+            ),
             "repo_id": job.repo_id,
             "job_id": job.id,
             "skill_name": skill.name,
             "clone": job.repo.model_dump(),
-            "repo": await self._repo_context(job),
             "previous_results": {
                 name: step.output for name, step in job.steps.items()
                 if name != skill.name and step.status == StepStatus.success and step.output
             },
         }
+        if include_repo:  # HTTP: Bob can't open the clone, so the files travel in the request
+            context["repo"] = await self._repo_context(job)
         if skill.local_tools:
             context["local_tool_results"] = await asyncio.to_thread(
                 run_local_tools, skill, self.repo_dir(job)

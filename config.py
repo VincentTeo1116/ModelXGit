@@ -13,9 +13,30 @@ def _int(name: str, default: int) -> int:
     return int(os.getenv(name) or default)
 
 
-# Bob API. The path is NOT verified against an official Bob API spec: confirm it
-# with the organisers and set BOB_SKILLS_PATH.
-BOB_API_KEY = os.getenv("BOB_API_KEY", "")
+def _bool(name: str) -> bool:
+    return os.getenv(name, "").strip().lower() in ("1", "true", "yes")
+
+
+# How skills reach Bob:
+#   shell - IBM Bob Shell's headless mode (`bob run`), the official way to automate Bob
+#           with an API key. Bob reads the cloned repo itself.
+#   http  - direct HTTP call. The endpoint is NOT an official public API: it is behind
+#           a firewall that blocks third-party clients. Use it only with the stand-in
+#           (devtools/mock_bob.py) or an endpoint the organisers confirm.
+BOB_CLIENT = os.getenv("BOB_CLIENT", "shell").strip().lower()
+BOB_API_KEY = os.getenv("BOB_API_KEY") or os.getenv("BOBSHELL_API_KEY") or ""
+
+# Bob Shell (BOB_CLIENT=shell)
+BOB_SHELL_JS = os.getenv("BOB_SHELL_JS", "")         # bobshell's dist/bob.js; auto-detected when empty
+BOB_TEAM_ID = os.getenv("BOB_TEAM_ID", "")           # only for API keys of type "general"
+BOB_ACCEPT_LICENSE = _bool("BOB_ACCEPT_LICENSE")     # set to true only after accepting the IBM license
+BOB_MAX_TURNS = _int("BOB_MAX_TURNS", 30)
+BOB_MAX_COST = os.getenv("BOB_MAX_COST", "")         # per skill run, empty = no limit
+BOB_SHELL_TIMEOUT = _int("BOB_SHELL_TIMEOUT", 900)
+# Bob may read and edit files, but not run commands, browse or use MCP servers.
+BOB_DISABLED_TOOL_GROUPS = os.getenv("BOB_DISABLED_TOOL_GROUPS", "execute,browser,mcp,subagent")
+
+# Direct HTTP (BOB_CLIENT=http)
 BOB_API_ENDPOINT = os.getenv("BOB_API_ENDPOINT", "https://api.us-east.bob.ibm.com").rstrip("/")
 BOB_SKILLS_PATH = os.getenv("BOB_SKILLS_PATH", "/inference/v1/skills/run")
 BOB_TIMEOUT = float(os.getenv("BOB_TIMEOUT") or 300)

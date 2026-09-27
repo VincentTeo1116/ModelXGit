@@ -24,7 +24,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 import config
-from bob_integration import BobClient
+from bob_integration import make_bob_client
 from orchestrator import (
     ConflictError, Job, Orchestrator, SkillRegistry, SkillTrigger, is_output_path, normalize_repo_url,
 )
@@ -49,7 +49,7 @@ app.add_middleware(
 )
 
 registry = SkillRegistry(config.SKILLS_DIR)
-bob = BobClient()
+bob = make_bob_client()
 orchestrator = Orchestrator(registry, bob)
 
 
@@ -64,6 +64,7 @@ def _job_for_repo(repo_id: str) -> Job:
 def health():
     return {
         "status": "ok",
+        "bob_client": bob.kind,
         "bob_configured": bob.configured,
         "bob_url": bob.url,
         "workspace": str(config.WORKSPACE),
@@ -158,7 +159,8 @@ async def run_skill(repo_id: str, skill_name: str, req: Optional[SkillRunRequest
 def list_files(repo_id: str):
     job = _job_for_repo(repo_id)
     root = orchestrator.repo_dir(job)
-    files = [p.relative_to(root).as_posix() for p in (root / "onboarding").rglob("*") if p.is_file()]
+    files = [rel for p in (root / "onboarding").rglob("*") if p.is_file()
+             and is_output_path(rel := p.relative_to(root).as_posix())]
     if any("README.md" in step.files_written for step in job.steps.values()):
         files.append("README.md")  # only once a skill has written it
     return {"repo_id": repo_id, "files": sorted(files)}

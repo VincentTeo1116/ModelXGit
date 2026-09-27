@@ -5,7 +5,7 @@ reports facts about what the backend sent (file counts, folders, scanner results
 
 Run it next to the backend:
     uvicorn devtools.mock_bob:app --port 8765
-    set BOB_API_KEY=any-value, BOB_API_ENDPOINT=http://127.0.0.1:8765,
+    set BOB_CLIENT=http, BOB_API_KEY=any-value, BOB_API_ENDPOINT=http://127.0.0.1:8765,
         BOB_SKILLS_PATH=/inference/v1/skills/run   (in .env or the environment)
 """
 import asyncio
