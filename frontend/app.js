@@ -98,6 +98,81 @@ function followUps(text) {
   }
   return qs.filter((q) => q.length > 3 && !/reply with a number/i.test(q));
 }
+// ---- readable onboarding files
+const FILE_LABELS = {
+  ONBOARDING_REPORT: "Onboarding report", README: "README", clone_report: "Clone report", setup: "Setup plan",
+  setup_report: "Setup plan", tech_stack: "Tech stack", architecture: "Architecture",
+  secrets_history: "Secret history audit", secrets_history_report: "Secret history audit",
+  secrets_precommit: "Secret scan", metrics: "Impact metrics", CODEBASE_MAP: "Codebase map", readme_report: "README report",
+};
+function fileLabel(path) {
+  const base = path.split("/").pop().replace(/\.(md|json|mmd)$/i, "");
+  return FILE_LABELS[base] || base.replace(/[_-]+/g, " ").replace(/^./, (c) => c.toUpperCase());
+}
+const humanKey = (k) => String(k).replace(/[_-]+/g, " ").replace(/([a-z])([A-Z])/g, "$1 $2").replace(/^./, (c) => c.toUpperCase());
+const isScalar = (v) => v === null || v === undefined || typeof v !== "object";
+function jrScalar(v) {
+  if (v === null || v === undefined || v === "") return `<span class="jr-none">—</span>`;
+  if (typeof v === "boolean") return v ? `<span class="jr-yes">✓ yes</span>` : `<span class="jr-no">✗ no</span>`;
+  if (typeof v === "number") return `<span class="jr-num">${esc(v)}</span>`;
+  const s = String(v);
+  if (s.length > 140 || s.includes("\n")) return `<div class="md">${md(s)}</div>`;
+  return /^https?:\/\//.test(s) ? `<a href="${esc(s)}" target="_blank" rel="noopener">${esc(s)}</a>` : esc(s);
+}
+function jrCell(v) {
+  if (isScalar(v)) return jrScalar(v);
+  if (Array.isArray(v)) return v.every(isScalar) ? v.map((x) => esc(x)).join(", ") || "—" : `${v.length} item${v.length === 1 ? "" : "s"}`;
+  if (v.path) return esc(v.path) + (v.lines ? `:${esc(v.lines)}` : "");
+  return Object.entries(v).map(([k, x]) => `${esc(humanKey(k))}: ${isScalar(x) ? esc(x) : "…"}`).join(" · ");
+}
+function jrValue(v, depth) {
+  if (isScalar(v)) return jrScalar(v);
+  if (Array.isArray(v)) {
+    if (!v.length) return `<span class="jr-none">none</span>`;
+    if (v.every(isScalar)) {
+      return v.length <= 16 && v.every((x) => String(x).length < 60)
+        ? `<div class="kv">${v.map((x) => `<span>${esc(x)}</span>`).join("")}</div>`
+        : `<ul>${v.map((x) => `<li>${jrScalar(x)}</li>`).join("")}</ul>`;
+    }
+    if (v.every((x) => x && typeof x === "object" && !Array.isArray(x))) {
+      const cols = [...new Set(v.flatMap((o) => Object.keys(o)))];
+      const shown = cols.slice(0, 7);
+      return `<div class="jr-table"><table><tr>${shown.map((c) => `<th>${esc(humanKey(c))}</th>`).join("")}</tr>${
+        v.map((o) => `<tr>${shown.map((c) => `<td>${jrCell(o[c])}</td>`).join("")}</tr>`).join("")}</table></div>`
+        + (cols.length > shown.length ? `<p class="qa-hint">Also: ${esc(cols.slice(7).map(humanKey).join(", "))} (see Raw JSON)</p>` : "");
+    }
+    return `<ul>${v.map((x) => `<li>${jrValue(x, depth + 1)}</li>`).join("")}</ul>`;
+  }
+  return jrObject(v, depth + 1);
+}
+function jrObject(o, depth) {
+  const entries = Object.entries(o).filter(([k]) => k !== "stand_in");
+  const simple = entries.filter(([, v]) => isScalar(v) || (Array.isArray(v) && v.every(isScalar) && v.length <= 16));
+  const complex = entries.filter((e) => !simple.includes(e));
+  const h = Math.min(depth + 2, 4);
+  return `${simple.length ? `<dl class="jr-dl">${simple.map(([k, v]) => `<dt>${esc(humanKey(k))}</dt><dd>${jrValue(v, depth)}</dd>`).join("")}</dl>` : ""}${
+    complex.map(([k, v]) => `<section class="jr-sec"><h${h}>${esc(humanKey(k))}</h${h}>${jrValue(v, depth)}</section>`).join("")}`;
+}
+function jsonReport(data, path) {
+  const stand = data && data.stand_in ? `<p class="compare hint" style="margin-top:0">Stand-in output: the real Bob API wasn't used for this file.</p>` : "";
+  return `<div class="jreport"><h2>${esc(fileLabel(path))}</h2>${stand}${jrValue(data, 0)}</div>`;
+}
+
+// One clean sentence from Bob's Markdown summary, for one-line subtitles.
+function snippet(text, max = 160) {
+  const plain = String(text || "")
+    .replace(/```[\s\S]*?```/g, " ")
+    .replace(/^\s*#{1,6}\s+.*$/gm, " ")
+    .replace(/^\s*([-*]{3,}\s*$|>\s?)/gm, "")
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
+    .replace(/[*_`]+/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (plain.length <= max) return plain;
+  const cut = plain.slice(0, max);
+  const end = Math.max(cut.lastIndexOf(". "), cut.lastIndexOf("! "), cut.lastIndexOf("? "));
+  return end > 60 ? cut.slice(0, end + 1) : cut.replace(/\s+\S*$/, "") + "…";
+}
 function statusPill(s) { return `<span class="status ${esc(s)}">${esc(s)}</span>`; }
 
 async function api(path, opts = {}) {
@@ -167,6 +242,7 @@ function md(src) {
       if (!list || list.tag !== tag) { flushList(); list = { tag, items: [] }; }
       list.items.push(m[2]);
     }
+    else if (/^\s*([-*_])(\s*\1){2,}\s*$/.test(line)) { flushPara(); flushList(); flushTable(); out.push("<hr>"); }
     else if (!line.trim()) { flushPara(); flushList(); flushTable(); }
     else { flushList(); flushTable(); para.push(line.trim()); }
   }
@@ -498,7 +574,7 @@ BOB_ACCEPT_LICENSE=true</code></pre></div>
 };
 
 // ------------------------------------------------------------------ job page
-views.job = async (view, jobId) => {
+views.job = async (view, jobId, deepFile) => {
   view.innerHTML = `<div class="empty">Loading…</div>`;
   let job, skills;
   try {
@@ -510,6 +586,7 @@ views.job = async (view, jobId) => {
   const readmeSkill = skills.manual.find((s) => s.name === "readme-generator");
   const readmeDeps = readmeSkill ? readmeSkill.depends_on : [];
   state.openFile = null;
+  state.userOpened = false;
   $("#crumb").textContent = repoName(job.repo.url);
 
   view.innerHTML = `
@@ -579,7 +656,7 @@ views.job = async (view, jobId) => {
     const st = s.status;
     const icon = { success: "✓", failed: "!", skipped: "–", pending: "·" }[st] || "";
     const out = s.output || {};
-    const sub = st === "failed" || st === "skipped" ? (s.error || "").split("\n")[0] : out.summary || skillDesc(name);
+    const sub = st === "failed" || st === "skipped" ? (s.error || "").split("\n")[0] : snippet(out.summary) || skillDesc(name);
     const left = s.started_at ? ((s.started_at - t0) / span) * 100 : 0;
     const width = s.started_at ? Math.max(1.5, (((s.finished_at || Date.now() / 1000) - s.started_at) / span) * 100) : 0;
     const open = state.expanded.has(name);
@@ -589,7 +666,7 @@ views.job = async (view, jobId) => {
         <button class="step-row" type="button" aria-expanded="${open}">
           <span class="step-icon ${esc(st)}">${icon}</span>
           <span><span class="step-name">${esc(skillName(name))}</span><span class="step-sub">${esc(sub)}</span></span>
-          <span class="step-right"><span class="step-time">${esc(fmtDur(s.started_at, s.finished_at))}</span>${statusPill(st)}</span>
+          <span class="step-right"><span class="step-time">${(s.error || "").startsWith("Interrupted") ? "interrupted" : esc(fmtDur(s.started_at, s.finished_at))}</span>${statusPill(st)}</span>
         </button>
         ${s.started_at ? `<div class="step-track"><i class="${esc(st)}" style="left:${left.toFixed(2)}%;width:${Math.min(width, 100 - left).toFixed(2)}%"></i></div>` : ""}
         ${open ? `<div class="step-body">
@@ -841,7 +918,7 @@ views.job = async (view, jobId) => {
 
   // ---- files
   let fileSig = "";
-  const fileIcon = (f) => (f.endsWith(".json") ? "{ }" : f.endsWith(".mmd") ? "◇" : "¶");
+  const fileIcon = (f) => (f.endsWith(".json") ? "▦" : f.endsWith(".mmd") ? "◇" : "¶");
   const renderFileList = async () => {
     let files = [];
     try { files = (await api(`/api/repos/${encodeURIComponent(job.repo_id)}/files`)).files; } catch { return; }
@@ -849,12 +926,21 @@ views.job = async (view, jobId) => {
     if (sig === fileSig) return;
     fileSig = sig;
     $("#fileCount").textContent = `${files.length} file${files.length === 1 ? "" : "s"}`;
-    const top = files.filter((f) => !f.startsWith("onboarding/")), onb = files.filter((f) => f.startsWith("onboarding/"));
-    const item = (f) => `<button class="file-item ${state.openFile === f ? "active" : ""}" type="button" data-file="${esc(f)}"><span>${fileIcon(f)}</span>${esc(f.replace("onboarding/", ""))}</button>`;
+    const first = ["onboarding/ONBOARDING_REPORT.md", "README.md"];
+    const byName = (a, b) => (first.indexOf(b) - first.indexOf(a)) || fileLabel(a).localeCompare(fileLabel(b));
+    const groups = [
+      ["Reports", files.filter((f) => f.endsWith(".md")).sort(byName)],
+      ["Diagrams", files.filter((f) => f.endsWith(".mmd"))],
+      ["Data for the app (shown readable)", files.filter((f) => f.endsWith(".json")).sort(byName)],
+      ["Other", files.filter((f) => !/\.(md|mmd|json)$/.test(f))],
+    ].filter(([, list]) => list.length);
+    const item = (f) => `<button class="file-item ${state.openFile === f ? "active" : ""}" type="button" data-file="${esc(f)}" title="${esc(f)}"><span>${fileIcon(f)}</span><span class="file-name"><strong>${esc(fileLabel(f))}</strong><small>${esc(f.replace("onboarding/", ""))}</small></span></button>`;
     $("#fileList").innerHTML = files.length
-      ? `${top.length ? `<div class="file-group-label">Repository</div>${top.map(item).join("")}` : ""}${onb.length ? `<div class="file-group-label">onboarding/</div>${onb.map(item).join("")}` : ""}`
+      ? groups.map(([label, list]) => `<div class="file-group-label">${esc(label)}</div>${list.map(item).join("")}`).join("")
       : `<div class="empty">No files yet.</div>`;
-    if (!state.openFile && files.length) openFile(files.includes("onboarding/tech_stack.md") ? "onboarding/tech_stack.md" : files[0], false);
+    if (deepFile && files.includes(deepFile) && !state.userOpened) { state.userOpened = true; openFile(deepFile); }  // #/job/<id>/file/<path>
+    const preferred = first.find((f) => files.includes(f)) || (files.includes("onboarding/tech_stack.md") ? "onboarding/tech_stack.md" : files[0]);
+    if (files.length && (!state.openFile || (state.openFile !== preferred && preferred === first[0] && !state.userOpened))) openFile(preferred, false);
     const pack = $("#packLink");
     pack.hidden = !files.length;
     pack.href = `${state.apiBase}/api/repos/${encodeURIComponent(job.repo_id)}/pack.zip`;
@@ -864,7 +950,7 @@ views.job = async (view, jobId) => {
     state.openFile = path;
     document.querySelectorAll(".file-item").forEach((b) => b.classList.toggle("active", b.dataset.file === path));
     const box = $("#fileView");
-    box.innerHTML = `<div class="file-view-head"><span>${esc(path)}</span></div><div class="file-view-body"><div class="empty">Loading…</div></div>`;
+    box.innerHTML = `<div class="file-view-head"><span><strong>${esc(fileLabel(path))}</strong> <span class="step-time">${esc(path)}</span></span></div><div class="file-view-body"><div class="empty">Loading…</div></div>`;
     if (scroll) box.scrollIntoView({ behavior: "smooth", block: "nearest" });
     let text;
     try { text = await api(`/api/repos/${encodeURIComponent(job.repo_id)}/files/${path.split("/").map(encodeURIComponent).join("/")}`); }
@@ -878,8 +964,14 @@ views.job = async (view, jobId) => {
     };
     if (path.endsWith(".md")) body.innerHTML = `<div class="md">${md(text)}</div>`;
     else if (path.endsWith(".json")) {
-      let pretty = text; try { pretty = JSON.stringify(JSON.parse(text), null, 2); } catch { /* show as-is */ }
-      body.innerHTML = `<pre class="raw">${esc(pretty)}</pre>`;
+      let data = null, pretty = text;
+      try { data = JSON.parse(text); pretty = JSON.stringify(data, null, 2); } catch { /* not valid JSON: show as-is */ }
+      if (data === null) { body.innerHTML = `<pre class="raw">${esc(pretty)}</pre>`; return; }
+      head.insertAdjacentHTML("beforeend", `<button class="btn btn-ghost btn-sm" type="button" id="rawToggle">Raw JSON</button>`);
+      let raw = false;
+      const show = () => { body.innerHTML = raw ? `<pre class="raw">${esc(pretty)}</pre>` : jsonReport(data, path); $("#rawToggle").textContent = raw ? "Readable view" : "Raw JSON"; };
+      $("#rawToggle").onclick = () => { raw = !raw; show(); };
+      show();
     } else if (path.endsWith(".mmd")) {
       body.innerHTML = `<div class="mermaid-box" id="mmd"><pre class="raw">${esc(text)}</pre></div>`;
       try {
@@ -901,6 +993,7 @@ views.job = async (view, jobId) => {
       try { await api(`/api/repos/${encodeURIComponent(job.repo_id)}/skills/${encodeURIComponent(retry.dataset.retry)}/run`, { method: "POST" }); toast(`Retrying ${skillName(retry.dataset.retry)}…`); poll(); }
       catch (ex) { toast(ex.message, "bad"); }
     } else if (fileBtn) {
+      state.userOpened = true;
       openFile(fileBtn.dataset.file);
     } else if (stepBtn) {
       const name = stepBtn.closest(".step").dataset.step;
@@ -983,7 +1076,7 @@ const ROUTES = [
   [/^#\/repos$/, "repos", "Repositories", "repos"],
   [/^#\/skills$/, "skills", "Skills", "skills"],
   [/^#\/settings$/, "settings", "Settings", "settings"],
-  [/^#\/job\/([\w-]+)$/, "job", "Repository", "repos"],
+  [/^#\/job\/([\w-]+)(?:\/file\/(.+))?$/, "job", "Repository", "repos"],
 ];
 async function route() {
   clearTimers();
@@ -991,7 +1084,7 @@ async function route() {
   const hash = location.hash || "#/";
   const match = ROUTES.find(([re]) => re.test(hash)) || ROUTES[0];
   const [re, view, crumb, nav] = match;
-  const arg = (hash.match(re) || [])[1];
+  const [, arg, arg2] = hash.match(re) || [];
   $("#crumb").textContent = crumb;
   document.querySelectorAll("[data-nav]").forEach((a) => a.classList.toggle("active", a.dataset.nav === nav));
   const el = $("#view");
@@ -999,7 +1092,7 @@ async function route() {
   const fresh = $("#view");
   window.scrollTo({ top: 0 });
   refreshJobs(); // keeps the sidebar repo count right on every page
-  await views[view](fresh, arg);
+  await views[view](fresh, arg, arg2 && decodeURIComponent(arg2));
 }
 
 $("#navClone").addEventListener("click", (e) => {

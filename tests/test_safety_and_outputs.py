@@ -127,3 +127,30 @@ def test_retry_only_temporary_errors(errors, calls, ok):
         except RuntimeError:
             return None
     assert (asyncio.run(run()) == "done") is ok and count["n"] == calls
+
+
+def test_masked_values_are_not_flagged_again():
+    text, n = o.mask_secrets('password = "Zx9fakeFAKEfake1234"')  # secret-scan: allow (fake test value)
+    assert n == 1 and o.validate_output("onboarding/setup_report.md", text) == []  # no "unmasked" false alarm
+    assert o.mask_secrets(text) == (text, 0)
+
+
+def test_clone_retries_network_errors_only(monkeypatch, tmp_path):
+    calls = []
+
+    def flaky(url, branch, dest, depth=None):
+        calls.append(1)
+        if len(calls) < 2:
+            raise RuntimeError("git clone failed: fatal: unable to access 'x': Could not resolve host: github.com")
+    monkeypatch.setattr(o, "clone_repo", flaky)
+    o.clone_with_retry("https://github.com/a/b.git", None, tmp_path / "a", pause=0)
+    assert len(calls) == 2
+
+    def missing(url, branch, dest, depth=None):
+        calls.append(1)
+        raise RuntimeError("git clone failed: repository not found, or it is private (not supported).")
+    calls.clear()
+    monkeypatch.setattr(o, "clone_repo", missing)
+    with pytest.raises(RuntimeError):
+        o.clone_with_retry("https://github.com/a/b.git", None, tmp_path / "b", pause=0)
+    assert len(calls) == 1

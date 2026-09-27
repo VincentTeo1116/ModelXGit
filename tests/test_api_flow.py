@@ -76,5 +76,9 @@ def test_full_flow(client):
     assert m["outputs_checked"] == m["outputs_valid"] > 0 and m["manual_baseline"] is None
     assert c.get("/api/metrics").json()["repos_onboarded"] >= 1
 
+    report = c.get(f"/api/repos/{repo_id}/files/onboarding/ONBOARDING_REPORT.md").text
+    assert report.startswith("# Onboarding report: demo") and "## At a glance" in report
+    assert "### ✓ Tech stack" in report and "## What you need to do" in report and "question(s) answered" in report
+
     reloaded = o.Orchestrator(main.registry, c.bob)  # a backend restart
     assert reloaded.jobs[job_id].status == "success"

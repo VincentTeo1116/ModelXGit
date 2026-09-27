@@ -271,6 +271,27 @@ def clone_repo(url: str, branch: Optional[str], dest: Path, depth: Optional[int]
         raise RuntimeError(f"git clone failed: {err[-1500:]}")
 
 
+NETWORK_ERRORS = ("could not resolve host", "failed to connect", "connection timed out", "connection reset",
+                  "operation timed out", "early eof", "rpc failed", "timed out after")
+
+
+def clone_with_retry(url: str, branch: Optional[str], dest: Path, depth: Optional[int] = None,
+                     attempts: int = 3, pause: float = 3.0):
+    """Clone, retrying network blips (e.g. 'Could not resolve host'); never retry 'not found'."""
+    for attempt in range(1, attempts + 1):
+        try:
+            return clone_repo(url, branch, dest, depth)
+        except RuntimeError as e:
+            network = any(s in str(e).lower() for s in NETWORK_ERRORS)
+            if not network or attempt == attempts:
+                if network:
+                    raise RuntimeError(f"Couldn't reach the git host after {attempts} tries: check your internet "
+                                       f"connection and try again. ({str(e).splitlines()[-1][:200]})") from e
+                raise
+            shutil.rmtree(dest, ignore_errors=True)  # a half-finished clone blocks the next try
+            time.sleep(pause * attempt)
+
+
 def repo_facts(dest: Path) -> Dict[str, Any]:
     head = _git(["log", "-1", "--format=%H%n%aI%n%s"], cwd=dest).stdout.splitlines()
     count = _git(["rev-list", "--count", "HEAD"], cwd=dest).stdout.strip()
@@ -800,6 +821,90 @@ def write_metrics(repo_dir: Path, metrics: Dict[str, Any]) -> None:
     os.replace(tmp, target)  # atomic: parallel skills may finish at the same time
 
 
+# ---- One readable report per onboarding (people read this; the JSON is for the app) ----
+REPORT_FILE = "onboarding/ONBOARDING_REPORT.md"
+SKILL_TITLES = {
+    "repo-clone": "Clone & repo report", "setup-dependencies": "Setup plan",
+    "tech-stack-detection": "Tech stack", "architecture-diagram": "Architecture",
+    "git-history-secret-audit": "Secret history audit", "secret-precommit-scanner": "Secret scan",
+    "codebase-qa": "Codebase Q&A", "readme-generator": "README",
+}
+
+
+def _fmt_secs(sec: Optional[float]) -> str:
+    if sec is None:
+        return "—"
+    s = int(round(sec))
+    return f"{s}s" if s < 60 else f"{s // 60}m {s % 60:02d}s"
+
+
+def build_onboarding_report(job: "Job", metrics: Dict[str, Any], order: List[str]) -> str:
+    repo, name = job.repo, job.repo.url.rstrip("/").rsplit("/", 1)[-1].removesuffix(".git")
+    commit = repo.commit or {}
+    m = metrics
+    if m["time_to_onboard_seconds"]:
+        onboard = _fmt_secs(m["time_to_onboard_seconds"])
+    elif m["pipeline_seconds"]:
+        onboard = f"pipeline had failures ({_fmt_secs(m['pipeline_seconds'])})"
+    else:
+        onboard = "still running"
+    bob = m["bob"]
+    lines = [
+        f"# Onboarding report: {name}", "",
+        f"- **Repository:** {repo.url}", f"- **Branch:** {repo.branch or 'default'}",
+        f"- **Commit:** `{(commit.get('hash') or '')[:7]}` {commit.get('message', '')}",
+        f"- **Generated:** {time.strftime('%Y-%m-%d %H:%M')} by the Model X backend from IBM Bob's results.", "",
+        "## At a glance", "", "| What | Result |", "|---|---|",
+        f"| Time to onboard | {onboard} |",
+        f"| Skills completed | {m['skills']['succeeded']} of {m['skills']['total']} |",
+        f"| Files produced | {m['files_produced']} ({m['outputs_valid']} of {m['outputs_checked']} passed the output check) |",
+        f"| Secret findings (raw, masked) | {m['secret_findings']['git_history']} in git history, "
+        f"{m['secret_findings']['current_files']} in current files |",
+        f"| Bob | {bob['runs']} runs, {bob['tool_calls']} tool calls, {_fmt_secs(bob['seconds'])} of Bob work"
+        + (f", cost {bob['cost']:.2f}" if bob["cost"] else "") + " |",
+        "", "## Results", "",
+    ]
+    names = [n for n in order if n in job.steps] + [n for n in job.steps if n not in order]
+    actions: List[str] = []
+    for n in names:
+        s = job.steps[n]
+        status = getattr(s.status, "value", s.status)
+        mark = {"success": "✓", "failed": "✗", "skipped": "–"}.get(status, "…")
+        interrupted = (s.error or "").startswith("Interrupted")
+        took = _fmt_secs(s.finished_at - s.started_at) if s.finished_at and s.started_at and not interrupted else ""
+        lines += [f"### {mark} {SKILL_TITLES.get(n, n)} · {'interrupted' if interrupted else status}{' · ' + took if took else ''}", ""]
+        out = s.output or {}
+        if n == "codebase-qa":
+            asked = [(r.input or {}).get("question") or "Role briefing" for r in s.runs if r.status == StepStatus.success]
+            lines += [f"{len(asked)} question(s) answered:", ""] + [f"- {q}" for q in asked] + [""]
+        elif out.get("summary"):
+            summary = out["summary"].strip()
+            lines += [summary if len(summary) <= 1500 else summary[:1500].rsplit("\n", 1)[0] + "\n\n*(shortened, see the files below)*", ""]
+        if s.error:
+            lines += [f"> **Problem:** {s.error.splitlines()[0][:300]}", ""]
+            actions.append(f"Retry **{SKILL_TITLES.get(n, n)}** ({s.error.splitlines()[0][:120]})")
+        if s.files_written:
+            lines += ["**Files:** " + ", ".join(f"`{f}`" for f in s.files_written), ""]
+        for w in out.get("warnings") or []:
+            lines += [f"> ⚠ {w[:300]}", ""]
+        actions += [a for a in out.get("actions_for_user") or [] if isinstance(a, str)]
+    lines += ["## What you need to do", ""]
+    lines += [f"- {a}" for a in dict.fromkeys(actions)] or ["- Nothing: every skill finished without open actions."]
+    lines += ["", "## All files", "", "Readable reports are the `.md` files; the `.json` files hold the same "
+              "results for the RepoPilot app.", ""]
+    lines += [f"- `{f}`" for f in m["files"]] + ["- `onboarding/metrics.json` (measured numbers)", ""]
+    return "\n".join(lines)
+
+
+def write_onboarding_report(repo_dir: Path, text: str) -> None:
+    target = repo_dir / REPORT_FILE
+    target.parent.mkdir(parents=True, exist_ok=True)
+    masked, _ = mask_secrets(text)  # the summaries come from Bob: never let a secret into the report
+    tmp = target.with_suffix(".md.tmp")
+    tmp.write_text(masked, encoding="utf-8")
+    os.replace(tmp, target)
+
+
 def collect_outputs(repo_dir: Path, skill: "SkillInfo", since: float) -> List[str]:
     """The skill's declared files that Bob wrote during this run."""
     return [rel for rel in skill.produces
@@ -965,7 +1070,7 @@ class Orchestrator:
         clone_started = time.time()
         self._update(job, clone_step, status=StepStatus.running, started_at=clone_started)
         try:
-            await asyncio.to_thread(clone_repo, job.repo.url, job.repo.branch, dest, job.repo.depth)
+            await asyncio.to_thread(clone_with_retry, job.repo.url, job.repo.branch, dest, job.repo.depth)
             job.repo.clone_seconds = round(time.time() - clone_started, 2)
             facts = await asyncio.to_thread(repo_facts, dest)
             job.repo.cloned = True
@@ -1079,8 +1184,11 @@ class Orchestrator:
             job, skill.name, status=run.status, output=run.output, error=run.error,
             files_written=sorted(set(step.files_written) | set(written)), finished_at=run.finished_at,
         )
-        try:  # metrics must never break a run
-            await asyncio.to_thread(write_metrics, self.repo_dir(job), self.metrics(job))
+        try:  # metrics and the readable report must never break a run
+            metrics = self.metrics(job)
+            await asyncio.to_thread(write_metrics, self.repo_dir(job), metrics)
+            report = build_onboarding_report(job, metrics, self.pipeline_names)
+            await asyncio.to_thread(write_onboarding_report, self.repo_dir(job), report)
         except Exception:
             pass
 

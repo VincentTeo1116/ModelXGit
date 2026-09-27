@@ -37,7 +37,7 @@ def is_lockfile(path):
 # A value is a placeholder only if it clearly looks like one. Searching for words
 # like "xxx" anywhere in it would skip real keys that contain them by chance
 # (a real Supabase key containing "XxX" was missed this way).
-PLACEHOLDER_MARKERS = re.compile(r"<[^>]*>|\$\{[^}]*\}|%[A-Z0-9_]+%|process\.env|import\.meta\.env|os\.environ")
+PLACEHOLDER_MARKERS = re.compile(r"<[^>]*>|\$\{[^}]*\}|%[A-Z0-9_]+%|process\.env|import\.meta\.env|os\.environ|\[masked\]")
 PLACEHOLDER_WORDS = re.compile(
     r"(?i)^(your|example|dummy|change[_\-]?me|placeholder|replace[_\-]?me)([_\-.\s].*|[a-z_\-.\s]*)$")
 PLACEHOLDER_FILL = re.compile(r"(?i)^([a-z]{1,6}[_\-])?[x*_.\-]{3,}$")  # xxxx, sk-XXXXXXXX, ghp_****
