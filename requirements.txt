@@ -1,5 +1,7 @@
-fastapi
-uvicorn
-httpx
-pyyaml
-python-dotenv
+# Pinned to the versions the whole system was tested with (demo-day reliability).
+fastapi==0.141.1
+uvicorn==0.54.0
+httpx==0.28.1
+pydantic==2.13.5
+PyYAML==6.0.3
+python-dotenv==1.2.3
