@@ -41,7 +41,8 @@ and unzip it.
 
 **Windows** (in PowerShell, inside the ModelXGit folder):
 ```
-powershell -ExecutionPolicy Bypass -File start.ps1
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+.\start.ps1
 ```
 
 **Mac / Linux** (in a terminal, inside the ModelXGit folder):
@@ -90,8 +91,8 @@ Bob's cost units and takes about 4–8 minutes.
 
 | Problem | Fix |
 |---|---|
-| `python` is not recognized | Reinstall Python with "Add python.exe to PATH" ticked, then open a new terminal |
-| "running scripts is disabled" (Windows) | Use the exact command in step 3 (`-ExecutionPolicy Bypass`) |
+| `python` is not recognized | The launcher falls back to `py`; if both commands are unavailable, reinstall Python with "Add python.exe to PATH" ticked, then open a new terminal |
+| "running scripts is disabled" (Windows) | Run `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass`, then retry `.\start.ps1` |
 | Port 8000 is busy | Windows: `... start.ps1 -Port 8010` · Mac/Linux: `PORT=8010 ./start.sh` |
 | "Bob Shell not found" | Install Node.js, then `npm install -g bobshell`, and open a new terminal |
 | "Bob Shell needs the IBM license accepted" | Add `BOB_ACCEPT_LICENSE=true` to `.env` (after reading the license) |
