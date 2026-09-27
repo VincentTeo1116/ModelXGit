@@ -731,21 +731,57 @@ views.job = async (view, jobId) => {
     $("#archCard").hidden = false;
     $("#archBox").innerHTML = `
       ${arch.summary ? `<p class="arch-summary">${esc(arch.summary)}</p>` : ""}
-      <div class="arch-wrap"><div class="arch" id="arch">
-        <svg class="arch-edges" id="archEdges" aria-hidden="true"></svg>
-        <div class="arch-cols" style="grid-template-columns:repeat(${layers.length}, minmax(150px, 1fr))">
-          ${layers.map((l) => {
-            const ln = l.id === "__other" ? other : nodes.filter((n) => n.layer === l.id);
-            const absent = l.present === false || !ln.length;
-            return `<div class="arch-col ${absent ? "absent" : ""}"><h4>${esc(l.name || l.id)}</h4>
-              ${absent ? `<p class="arch-note">${esc(l.note || "Not present in this repo")}</p>` : ""}
-              ${ln.map((n) => `<button class="arch-node" type="button" data-node="${esc(n.id)}"><strong>${esc(n.label || n.id)}</strong><small>${esc((n.files || []).length)} file${(n.files || []).length === 1 ? "" : "s"}</small></button>`).join("")}
-            </div>`;
-          }).join("")}
+      <div class="arch-layout" id="archLayout">
+        <div class="arch-pane">
+          <div class="arch-wrap"><div class="arch" id="arch">
+            <svg class="arch-edges" id="archEdges" aria-hidden="true"></svg>
+            <div class="arch-cols" style="grid-template-columns:repeat(${layers.length}, minmax(180px, 1fr))">
+              ${layers.map((l) => {
+                const ln = l.id === "__other" ? other : nodes.filter((n) => n.layer === l.id);
+                const absent = l.present === false || !ln.length;
+                return `<div class="arch-col ${absent ? "absent" : ""}"><h4>${esc(l.name || l.id)}</h4>
+                  ${absent ? `<p class="arch-note">${esc(l.note || "Not present in this repo")}</p>` : ""}
+                  ${ln.map((n) => `<button class="arch-node" type="button" data-node="${esc(n.id)}"><strong>${esc(n.label || n.id)}</strong><small>${esc((n.files || []).length)} file${(n.files || []).length === 1 ? "" : "s"}</small></button>`).join("")}
+                </div>`;
+              }).join("")}
+            </div>
+          </div></div>
         </div>
-      </div></div>
-      <div class="arch-detail" id="archDetail"><span class="qa-hint">Select a component.</span></div>`;
+        <button class="arch-divider" id="archDivider" type="button" aria-label="Resize architecture details panel"></button>
+        <aside class="arch-detail" id="archDetail"><span class="qa-hint">Select a component.</span></aside>
+      </div>`;
     requestAnimationFrame(drawArchEdges);
+
+    const divider = $("#archDivider");
+    const layout = $("#archLayout");
+
+    if (divider && layout) {
+      divider.onpointerdown = (event) => {
+        event.preventDefault();
+        divider.setPointerCapture(event.pointerId);
+
+        divider.onpointermove = (moveEvent) => {
+          const rect = layout.getBoundingClientRect();
+          const detailWidth = Math.max(
+            240,
+            Math.min(520, rect.right - moveEvent.clientX)
+          );
+
+          layout.style.setProperty(
+            "--arch-detail-width",
+            `${detailWidth}px`
+          );
+
+          requestAnimationFrame(drawArchEdges);
+        };
+
+        divider.onpointerup = () => {
+          divider.releasePointerCapture(event.pointerId);
+          divider.onpointermove = null;
+        };
+      };
+    }
+
   };
   const drawArchEdges = () => {
     const box = $("#arch"), svg = $("#archEdges");

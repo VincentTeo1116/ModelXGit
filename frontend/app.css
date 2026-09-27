@@ -295,6 +295,72 @@ code { font-family: var(--mono); font-size: .92em; }
 .arch-detail h4 { margin: 10px 0 4px; color: var(--soft-muted); font: 500 10.5px var(--mono); letter-spacing: .1em; text-transform: uppercase; }
 .arch-detail p { margin: 0; color: #5d5c70; }
 .arch-detail ul { margin: 0; padding-left: 18px; }
+.arch-layout {
+  --arch-detail-width: 320px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 8px var(--arch-detail-width);
+  min-height: 480px;
+  gap: 0;
+}
+
+.arch-pane {
+  min-width: 0;
+  overflow: auto;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 14px 0 0 14px;
+  background: #fcfbff;
+}
+
+.arch-wrap {
+  min-width: 900px;
+  overflow: visible;
+}
+
+.arch {
+  position: relative;
+  min-width: 900px;
+}
+
+.arch-cols {
+  gap: 22px;
+}
+
+.arch-divider {
+  border: 0;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  background: #f1efff;
+  cursor: col-resize;
+}
+
+.arch-divider:hover {
+  background: var(--purple);
+}
+
+.arch-detail {
+  min-width: 220px;
+  max-height: 480px;
+  margin: 0;
+  overflow: auto;
+  border-radius: 0 14px 14px 0;
+}
+
+@media (max-width: 800px) {
+  .arch-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .arch-divider {
+    display: none;
+  }
+
+  .arch-detail {
+    margin-top: 14px;
+    border-radius: 12px;
+    max-height: none;
+  }
+}
 
 /* Follow-up chips */
 .followups { align-items: center; margin-top: 4px; }
