@@ -63,7 +63,10 @@ async def run_skill(req: Request):
                   f"- Your role: {user.get('role') or 'not given'}\n"
                   f"- Your question: {user.get('question') or 'role briefing'}\n"
                   f"- Bob would read these files first:\n"
-                  + "\n".join(f"  - `{p}`" for p in files[:6]))
+                  + "\n".join(f"  - `{p}`" for p in files[:6])
+                  + "\n\n**You might ask next:**\n1. Which files should I read first?\n"
+                    "2. How do I run it locally?\n3. What could break if I change the main entry file?\n"
+                    "(Reply with a number to ask it.)")
     actions = [f"Review {n} masked finding(s) from {tool}" for tool, n in findings.items() if n]
     return {
         "summary": f"[stand-in] {name}: received {len(files)} files" + (f", {sum(findings.values())} scanner findings" if findings else ""),

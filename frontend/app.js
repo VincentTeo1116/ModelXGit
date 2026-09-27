@@ -84,6 +84,20 @@ function compareHtml(onboardSec, serverBaseline) {
   const pct = Math.round(100 * (1 - auto / manual));
   return `<div class="compare">Manual baseline <strong>${esc(manual)} min</strong> → automated <strong>${esc(auto.toFixed(1))} min</strong>: <strong>${esc(pct)}% faster</strong>, ${esc((manual - auto).toFixed(1))} min saved per repo.</div>`;
 }
+// Bob ends answers with "You might ask next:" and a numbered list: turn it into chips.
+function followUps(text) {
+  const lines = String(text || "").split("\n");
+  const start = lines.findIndex((l) => /you might ask next|suggested follow-?up|questions? you (could|might) ask/i.test(l));
+  if (start < 0) return [];
+  const qs = [];
+  for (const l of lines.slice(start + 1)) {
+    const m = l.match(/^\s*(?:\d+[.)]|[-*])\s+(.+?)\s*$/);
+    if (m) qs.push(m[1].replace(/\*\*/g, "").replace(/`/g, "").trim());
+    else if (qs.length && l.trim()) break;
+    if (qs.length >= 3) break;
+  }
+  return qs.filter((q) => q.length > 3 && !/reply with a number/i.test(q));
+}
 function statusPill(s) { return `<span class="status ${esc(s)}">${esc(s)}</span>`; }
 
 async function api(path, opts = {}) {
@@ -499,7 +513,7 @@ views.job = async (view, jobId) => {
     </section>
     <div class="job-grid">
       <section class="card">
-        <div class="card-title-row"><h2 class="card-title">Pipeline</h2><span id="pipeTime" class="step-time"></span></div>
+        <div class="card-title-row"><h2 class="card-title">Pipeline</h2><span class="title-actions"><button class="btn btn-soft btn-sm" type="button" id="retryFailed" hidden>↻ Retry failed</button><span id="pipeTime" class="step-time"></span></span></div>
         <p class="card-note">Runs after you confirm the clone. Click a step for Bob's summary, actions and files.</p>
         <div class="steps" id="steps"></div>
       </section>
@@ -525,8 +539,13 @@ views.job = async (view, jobId) => {
         </section>
       </div>
     </div>
+    <section class="card" id="archCard" style="margin-top:18px" hidden>
+      <div class="card-title-row"><h2 class="card-title">Architecture</h2><span class="badge neutral">from Bob's architecture.json</span></div>
+      <p class="card-note">Click a component to see its files, endpoints and connections. Dashed columns are layers this repo doesn't have.</p>
+      <div id="archBox"></div>
+    </section>
     <section class="card" style="margin-top:18px">
-      <div class="card-title-row"><h2 class="card-title">Onboarding files</h2><span class="step-time" id="fileCount"></span></div>
+      <div class="card-title-row"><h2 class="card-title">Onboarding files</h2><span class="title-actions"><span class="step-time" id="fileCount"></span><a class="btn btn-ghost btn-sm" id="packLink" hidden download>↓ Download pack (.zip)</a></span></div>
       <div class="file-layout"><div class="file-list" id="fileList"></div><div class="file-view" id="fileView"><div class="file-view-body"><div class="empty">Files appear here as the skills finish.</div></div></div></div>
     </section>
     ${footerHtml()}`;
@@ -590,6 +609,10 @@ views.job = async (view, jobId) => {
     const t0 = starts.length ? Math.min(...starts) : 0;
     const span = Math.max(1, (ends.length ? Math.max(...ends) : t0 + 1) - t0);
     $("#steps").innerHTML = names.map((n) => stepHtml(n, job.steps[n], t0, span)).join("");
+    const failedAuto = PIPELINE.slice(1).filter((n) => job.steps[n] && job.steps[n].status === "failed");
+    const rb = $("#retryFailed");
+    rb.hidden = !(failedAuto.length && job.repo.cloned);
+    rb.textContent = `↻ Retry failed (${failedAuto.length})`;
     const pipeSteps = PIPELINE.map((n) => job.steps[n]).filter(Boolean);
     const done = pipeSteps.filter((s) => !ACTIVE.has(s.status)).length;
     $("#pipeTime").textContent = `${done}/${pipeSteps.length} done${starts.length ? " · " + fmtDur(t0, pipeSteps.every((s) => s.finished_at) ? Math.max(...pipeSteps.map((s) => s.finished_at)) : null) : ""}`;
@@ -610,6 +633,11 @@ views.job = async (view, jobId) => {
     if (running) {
       const pendingQ = state.pendingQuestion;
       items.unshift(`<div class="msg">${pendingQ ? `<div class="msg-q"><small>${esc(pendingQ.role)} developer</small>${esc(pendingQ.question)}</div>` : ""}<div class="msg-a pending">Bob is reading the code…</div></div>`);
+    }
+    const last = runs.slice().reverse().find((r) => r.status === "success");
+    const follow = !running && last ? followUps((last.output && (last.output.answer || last.output.summary)) || "") : [];
+    if (follow.length && items.length) {
+      items[0] = items[0].replace(/<\/div>$/, `<div class="suggestions followups"><span class="qa-hint">Bob suggests next:</span>${follow.map((q) => `<button class="suggestion ask-now" type="button">${esc(q)}</button>`).join("")}</div></div>`);
     }
     $("#chat").innerHTML = items.join("") || `<div class="empty">Pick your role and ask anything about ${esc(repoName(job.repo.url))}.</div>`;
     const blocked = !job.repo.cloned || running;
@@ -641,7 +669,8 @@ views.job = async (view, jobId) => {
     const stand = !m.bob.cost && !m.bob.tool_calls;
     $("#impactBox").innerHTML = `
       <div class="impact-grid">
-        ${tile("Time to onboard", m.time_to_onboard_seconds ? fmtSecs(m.time_to_onboard_seconds) : "running…", `clone ${fmtSecs(m.clone_seconds)} · then Bob`)}
+        ${tile("Time to onboard", m.time_to_onboard_seconds ? fmtSecs(m.time_to_onboard_seconds) : m.pipeline_seconds ? "—" : "running…",
+               m.time_to_onboard_seconds ? `clone ${fmtSecs(m.clone_seconds)} · then Bob` : m.pipeline_seconds ? `pipeline had failures (${fmtSecs(m.pipeline_seconds)})` : "measuring")}
         ${tile("Skills completed", `${m.skills.succeeded}/${m.skills.total}`, m.skills.failed ? `${m.skills.failed} failed` : m.skills.running ? `${m.skills.running} running` : "no failures")}
         ${tile("Files produced", m.files_produced, m.outputs_checked ? `${m.outputs_valid}/${m.outputs_checked} passed the output check` : "onboarding/ + README")}
         ${tile("Secret findings", m.secret_findings.total, `history ${m.secret_findings.git_history} · current ${m.secret_findings.current_files}`)}
@@ -651,6 +680,105 @@ views.job = async (view, jobId) => {
       ${compareHtml(m.time_to_onboard_seconds, m.manual_baseline && m.manual_baseline.manual_minutes)}
       <p class="qa-hint" style="margin:10px 0 0">Saved as <button class="file-chip" type="button" data-file="onboarding/metrics.json">onboarding/metrics.json</button> · secret counts are raw scanner findings; Bob's reports say which are false positives.</p>`;
   };
+
+  // Retry every failed automatic skill, in dependency order (the backend refuses a skill
+  // whose dependency is still running, so wait and try again).
+  const retryFailed = async () => {
+    const btn = $("#retryFailed");
+    btn.disabled = true;
+    const order = PIPELINE.slice(1).filter((n) => job.steps[n] && job.steps[n].status === "failed");
+    for (const name of order) {
+      for (let attempt = 0; attempt < 60; attempt++) {
+        try {
+          await api(`/api/repos/${encodeURIComponent(job.repo_id)}/skills/${encodeURIComponent(name)}/run`, { method: "POST" });
+          break;
+        } catch (ex) {
+          if (ex.status === 409 && /finish first/.test(ex.message)) { await new Promise((r) => setTimeout(r, 2000)); continue; }
+          toast(`${skillName(name)}: ${ex.message}`, "bad");
+          break;
+        }
+      }
+      poll();
+    }
+    btn.disabled = false;
+    toast(`Retrying ${order.length} skill${order.length === 1 ? "" : "s"}…`);
+  };
+
+  // ---- architecture graph from architecture.json
+  let arch = null, archSig = "";
+  const LAYER_ORDER = ["client", "api", "core", "storage", "external"];
+  const renderArch = async () => {
+    let text;
+    try { text = await api(`/api/repos/${encodeURIComponent(job.repo_id)}/files/onboarding/architecture.json`); } catch { return; }
+    if (typeof text !== "string") text = JSON.stringify(text);
+    if (text === archSig) return;
+    archSig = text;
+    try { arch = JSON.parse(text); } catch { $("#archCard").hidden = true; return; }
+    const nodes = Array.isArray(arch.nodes) ? arch.nodes.filter((n) => n && n.id) : [];
+    if (!nodes.length) { $("#archCard").hidden = true; return; }
+    const layers = (Array.isArray(arch.layers) && arch.layers.length ? arch.layers : LAYER_ORDER.map((id) => ({ id, name: id, present: true })))
+      .slice().sort((a, b) => (LAYER_ORDER.indexOf(a.id) + 99) % 99 - (LAYER_ORDER.indexOf(b.id) + 99) % 99);
+    const known = new Set(layers.map((l) => l.id));
+    const other = nodes.filter((n) => !known.has(n.layer));
+    if (other.length) layers.push({ id: "__other", name: "Other", present: true });
+    $("#archCard").hidden = false;
+    $("#archBox").innerHTML = `
+      ${arch.summary ? `<p class="arch-summary">${esc(arch.summary)}</p>` : ""}
+      <div class="arch-wrap"><div class="arch" id="arch">
+        <svg class="arch-edges" id="archEdges" aria-hidden="true"></svg>
+        <div class="arch-cols" style="grid-template-columns:repeat(${layers.length}, minmax(150px, 1fr))">
+          ${layers.map((l) => {
+            const ln = l.id === "__other" ? other : nodes.filter((n) => n.layer === l.id);
+            const absent = l.present === false || !ln.length;
+            return `<div class="arch-col ${absent ? "absent" : ""}"><h4>${esc(l.name || l.id)}</h4>
+              ${absent ? `<p class="arch-note">${esc(l.note || "Not present in this repo")}</p>` : ""}
+              ${ln.map((n) => `<button class="arch-node" type="button" data-node="${esc(n.id)}"><strong>${esc(n.label || n.id)}</strong><small>${esc((n.files || []).length)} file${(n.files || []).length === 1 ? "" : "s"}</small></button>`).join("")}
+            </div>`;
+          }).join("")}
+        </div>
+      </div></div>
+      <div class="arch-detail" id="archDetail"><span class="qa-hint">Select a component.</span></div>`;
+    requestAnimationFrame(drawArchEdges);
+  };
+  const drawArchEdges = () => {
+    const box = $("#arch"), svg = $("#archEdges");
+    if (!box || !svg || !arch) return;
+    const b = box.getBoundingClientRect();
+    svg.setAttribute("viewBox", `0 0 ${b.width} ${b.height}`);
+    svg.setAttribute("width", b.width); svg.setAttribute("height", b.height);
+    const pos = (id) => {
+      const el = box.querySelector(`.arch-node[data-node="${CSS.escape(id)}"]`);
+      if (!el) return null;
+      const r = el.getBoundingClientRect();
+      return { l: r.left - b.left, r: r.right - b.left, y: r.top - b.top + r.height / 2, cx: r.left - b.left + r.width / 2 };
+    };
+    const paths = (arch.edges || []).map((e, i) => {
+      const a = pos(e.from), c = pos(e.to);
+      if (!a || !c) return "";
+      let d;
+      if (Math.abs(a.cx - c.cx) < 4) { const x = a.r - 6, bend = x + 40; d = `M ${x} ${a.y} C ${bend} ${a.y}, ${bend} ${c.y}, ${x} ${c.y}`; }
+      else if (a.cx < c.cx) { const m = (a.r + c.l) / 2; d = `M ${a.r} ${a.y} C ${m} ${a.y}, ${m} ${c.y}, ${c.l} ${c.y}`; }
+      else { const m = (a.l + c.r) / 2; d = `M ${a.l} ${a.y} C ${m} ${a.y}, ${m} ${c.y}, ${c.r} ${c.y}`; }
+      return `<path d="${d}" data-from="${esc(e.from)}" data-to="${esc(e.to)}" marker-end="url(#arrow)"><title>${esc(`${e.from} → ${e.to}${e.label ? ": " + e.label : ""}`)}</title></path>`;
+    }).join("");
+    svg.innerHTML = `<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor"/></marker></defs>${paths}`;
+  };
+  const selectArchNode = (id) => {
+    const n = (arch.nodes || []).find((x) => x.id === id);
+    if (!n) return;
+    document.querySelectorAll(".arch-node").forEach((el) => el.classList.toggle("active", el.dataset.node === id));
+    document.querySelectorAll("#archEdges path[data-from]").forEach((p) => p.classList.toggle("hot", p.dataset.from === id || p.dataset.to === id));
+    const label = (x) => ((arch.nodes || []).find((m) => m.id === x) || {}).label || x;
+    const out = (arch.edges || []).filter((e) => e.from === id), inc = (arch.edges || []).filter((e) => e.to === id);
+    $("#archDetail").innerHTML = `
+      <h3>${esc(n.label || n.id)} <span class="kv"><span class="accent">${esc(n.layer || "")}</span></span></h3>
+      ${n.description ? `<p>${esc(n.description)}</p>` : ""}
+      ${(n.files || []).length ? `<h4>Files</h4><div class="kv">${n.files.map((f) => `<span>${esc(typeof f === "string" ? f : f.path)}${f.lines ? ":" + esc(f.lines) : ""}</span>`).join("")}</div>` : ""}
+      ${(n.endpoints || []).length ? `<h4>Endpoints</h4><div class="kv">${n.endpoints.map((x) => `<span>${esc(typeof x === "string" ? x : JSON.stringify(x))}</span>`).join("")}</div>` : ""}
+      ${out.length ? `<h4>Uses</h4><ul>${out.map((e) => `<li>${esc(label(e.to))}${e.label ? ` <code>${esc(e.label)}</code>` : ""}</li>`).join("")}</ul>` : ""}
+      ${inc.length ? `<h4>Used by</h4><ul>${inc.map((e) => `<li>${esc(label(e.from))}${e.label ? ` <code>${esc(e.label)}</code>` : ""}</li>`).join("")}</ul>` : ""}`;
+  };
+  window.addEventListener("resize", () => requestAnimationFrame(drawArchEdges));
 
   const renderIde = () => {
     const h = job.bob_ide;
@@ -684,6 +812,10 @@ views.job = async (view, jobId) => {
       ? `${top.length ? `<div class="file-group-label">Repository</div>${top.map(item).join("")}` : ""}${onb.length ? `<div class="file-group-label">onboarding/</div>${onb.map(item).join("")}` : ""}`
       : `<div class="empty">No files yet.</div>`;
     if (!state.openFile && files.length) openFile(files.includes("onboarding/tech_stack.md") ? "onboarding/tech_stack.md" : files[0], false);
+    const pack = $("#packLink");
+    pack.hidden = !files.length;
+    pack.href = `${state.apiBase}/api/repos/${encodeURIComponent(job.repo_id)}/pack.zip`;
+    if (files.includes("onboarding/architecture.json")) renderArch();
   };
   const openFile = async (path, scroll = true) => {
     state.openFile = path;
@@ -733,7 +865,12 @@ views.job = async (view, jobId) => {
       renderSteps();
     } else if (sugg) {
       $("#qaInput").value = sugg.textContent;
-      $("#qaInput").focus();
+      if (sugg.classList.contains("ask-now") && !$("#qaSend").disabled) $("#qaForm").requestSubmit();
+      else $("#qaInput").focus();
+    } else if (e.target.closest("#retryFailed")) {
+      retryFailed();
+    } else if (e.target.closest(".arch-node")) {
+      selectArchNode(e.target.closest(".arch-node").dataset.node);
     } else if (e.target.closest("#openBob")) {
       try { await api(`/api/repos/${encodeURIComponent(job.repo_id)}/open-in-bob`, { method: "POST" }); toast("Opening Bob IDE…", "ok"); }
       catch (ex) { toast(ex.message, "bad"); }

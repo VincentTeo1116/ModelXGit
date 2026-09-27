@@ -692,8 +692,10 @@ def compute_metrics(job: "Job", pipeline: List[str]) -> Dict[str, Any]:
     steps = job.steps
     pipe = [steps[n] for n in pipeline if n in steps]
     finished = [s for s in pipe if s.finished_at and s.started_at]
-    onboard_seconds = (round(max(s.finished_at for s in finished) - min(s.started_at for s in finished), 1)
-                       if pipe and len(finished) == len(pipe) else None)
+    elapsed = (round(max(s.finished_at for s in finished) - min(s.started_at for s in finished), 1)
+               if pipe and len(finished) == len(pipe) else None)
+    pipeline_ok = bool(pipe) and all(s.status == StepStatus.success for s in pipe)
+    onboard_seconds = elapsed if pipeline_ok else None  # only a fully successful onboarding counts
 
     def last_stats(step: "JobStep") -> Dict[str, Any]:
         return ((step.runs[-1].output or {}).get("stats") or {}) if step.runs else {}
@@ -725,6 +727,8 @@ def compute_metrics(job: "Job", pipeline: List[str]) -> Dict[str, Any]:
         "commit": (job.repo.commit or {}).get("hash"),
         "clone_seconds": job.repo.clone_seconds,
         "time_to_onboard_seconds": onboard_seconds,
+        "pipeline_seconds": elapsed,
+        "pipeline_succeeded": pipeline_ok,
         "skills": {
             "total": len(steps),
             "succeeded": sum(s.status == StepStatus.success for s in steps.values()),

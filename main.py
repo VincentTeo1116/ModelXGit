@@ -16,13 +16,17 @@ Run:  uvicorn main:app --port 8000
                                                 codebase-qa body: {"role": "...", "question": "..."}
   GET  /api/repos/{repo_id}/files               files the skills wrote (onboarding/, README.md)
   GET  /api/repos/{repo_id}/files/{path}        one of those files
+  GET  /api/repos/{repo_id}/pack.zip            all of them in one download
   POST /api/repos/{repo_id}/open-in-bob         open the clone in Bob IDE (only from this computer)
 """
+import io
+import re
+import zipfile
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -187,13 +191,33 @@ async def run_skill(repo_id: str, skill_name: str, req: Optional[SkillRunRequest
 
 @app.get("/api/repos/{repo_id}/files")
 def list_files(repo_id: str):
-    job = _job_for_repo(repo_id)
+    _, files = _output_files(_job_for_repo(repo_id))
+    return {"repo_id": repo_id, "files": files}
+
+
+def _output_files(job: Job):
     root = orchestrator.repo_dir(job)
     files = [rel for p in (root / "onboarding").rglob("*") if p.is_file()
              and is_output_path(rel := p.relative_to(root).as_posix())]
     if any("README.md" in step.files_written for step in job.steps.values()):
         files.append("README.md")  # only once a skill has written it
-    return {"repo_id": repo_id, "files": sorted(files)}
+    return root, sorted(files)
+
+
+@app.get("/api/repos/{repo_id}/pack.zip")
+def download_pack(repo_id: str):
+    """The onboarding pack: every file the skills wrote, plus metrics, in one zip."""
+    job = _job_for_repo(repo_id)
+    root, files = _output_files(job)
+    if not files:
+        raise HTTPException(404, "No onboarding files yet")
+    name = re.sub(r"[^A-Za-z0-9._-]", "-", job.repo.url.rstrip("/").rsplit("/", 1)[-1].removesuffix(".git")) or "repo"
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        for rel in files:
+            z.write(root / rel, arcname=f"{name}-onboarding/{rel}")
+    return Response(buf.getvalue(), media_type="application/zip",
+                    headers={"Content-Disposition": f'attachment; filename="{name}-onboarding.zip"'})
 
 
 @app.get("/api/repos/{repo_id}/files/{file_path:path}", response_class=PlainTextResponse)
