@@ -66,7 +66,7 @@ class BobShellClient:
         if not self.api_key:
             raise RuntimeError("BOB_API_KEY is not set: add it to the backend's .env file.")
         if not self.script:
-            raise RuntimeError("Bob Shell not found: install it (npm install -g bobshell) or set BOB_SHELL_JS.")
+            raise RuntimeError("Bob Shell not found: install it with IBM's installer (bob.ibm.com/download/bobshell.ps1 or bobshell.sh) or set BOB_SHELL_JS.")
         env = {**os.environ, "BOBSHELL_API_KEY": self.api_key, "FORCE_COLOR": "0", "NO_COLOR": "1"}
         try:
             r = subprocess.run(

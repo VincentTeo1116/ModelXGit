@@ -24,7 +24,7 @@ if [ "$STANDIN" = 1 ] || ! has_key; then
   "$PY" -m uvicorn devtools.mock_bob:app --port 8765 --log-level warning &
   MOCK=$!
 else
-  command -v bob >/dev/null || { echo "Bob Shell not found. Install it with: npm install -g bobshell"; exit 1; }
+  command -v bob >/dev/null || { echo "Bob Shell not found. Install it with: curl -fsSL https://bob.ibm.com/download/bobshell.sh | bash"; exit 1; }
   echo "Using real IBM Bob through Bob Shell."
 fi
 trap '[ -n "$MOCK" ] && kill "$MOCK" 2>/dev/null || true' EXIT

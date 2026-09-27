@@ -105,7 +105,7 @@ flowchart LR
 ## Setup
 
 Prerequisites: Git, Python 3.10+, and for real Bob: Node.js 22.15+ and
-`npm install -g bobshell`.
+IBM's installer: `irm https://bob.ibm.com/download/bobshell.ps1 | iex` (Windows) or `curl -fsSL https://bob.ibm.com/download/bobshell.sh | bash` (macOS/Linux).
 
 ```bash
 git clone -b pipeline-frontend https://github.com/VincentTeo1116/ModelXGit.git

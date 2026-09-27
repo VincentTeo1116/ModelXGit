@@ -46,7 +46,7 @@ if ($StandIn -or -not $hasKey) {
         -WorkingDirectory $PSScriptRoot -WindowStyle Hidden -PassThru
 } else {
     if (-not (Get-Command bob -ErrorAction SilentlyContinue)) {
-        Write-Host "Bob Shell not found. Install it with: npm install -g bobshell" -ForegroundColor Red
+        Write-Host "Bob Shell not found. Install it with: irm https://bob.ibm.com/download/bobshell.ps1 | iex" -ForegroundColor Red
         exit 1
     }
     Write-Host "Using real IBM Bob through Bob Shell." -ForegroundColor Cyan

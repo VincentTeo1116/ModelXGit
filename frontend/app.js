@@ -281,7 +281,7 @@ async function refreshHealth() {
     const local = !shell && /127\.0\.0\.1|localhost/.test(h.bob_url || "");
     if (!h.bob_configured) {
       cls = "warn"; pillText = "Backend up · Bob not ready";
-      [title, sub] = shell && /not found/.test(h.bob_url) ? ["Bob Shell missing", "npm install -g bobshell"] : ["Bob key missing", "Add BOB_API_KEY to .env"];
+      [title, sub] = shell && /not found/.test(h.bob_url) ? ["Bob Shell missing", "Install it from bob.ibm.com/download"] : ["Bob key missing", "Add BOB_API_KEY to .env"];
     }
     else if (local) { cls = "warn"; title = "Bob stand-in"; sub = "Local test API, not real Bob"; pillText = "Backend up · Bob stand-in"; }
     else { cls = "ok"; title = "Bob connected"; sub = shell ? "via IBM Bob Shell" : h.bob_url.replace(/^https?:\/\//, "").split("/")[0]; pillText = "All systems ready"; }
@@ -606,7 +606,7 @@ views.settings = async (view) => {
     </div>
     <div class="card" style="margin-top:18px" ${state.health && state.health.hosted ? "hidden" : ""}>
       <div class="card-title-row"><h2 class="card-title">Connect the real Bob API</h2></div>
-      <p class="card-note">The backend runs each skill with IBM Bob Shell (<code>npm install -g bobshell</code>). Create <code>.env</code> next to <code>main.py</code> and restart the backend. Create the key at bob.ibm.com → API keys; set BOB_ACCEPT_LICENSE only after reading the license (<code>bob --show-license</code>).</p>
+      <p class="card-note">The backend runs each skill with IBM Bob Shell (Windows: <code>irm https://bob.ibm.com/download/bobshell.ps1 | iex</code> · Mac/Linux: <code>curl -fsSL https://bob.ibm.com/download/bobshell.sh &#124; bash</code>). Create <code>.env</code> next to <code>main.py</code> and restart the backend. Create the key at bob.ibm.com → API keys; set BOB_ACCEPT_LICENSE only after reading the license (<code>bob --show-license</code>).</p>
       <div class="md"><pre><code>BOB_CLIENT=shell
 BOB_API_KEY=your key
 BOB_ACCEPT_LICENSE=true</code></pre></div>

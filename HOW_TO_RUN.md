@@ -17,7 +17,7 @@ You can run it in two ways:
 | **Python 3.10 or newer** | always | https://www.python.org/downloads/ (on Windows tick "Add python.exe to PATH") |
 | **The project** | always | see step 2 |
 | **Node.js 22.15 or newer** | real Bob mode only | https://nodejs.org/ |
-| **Bob Shell** | real Bob mode only | after Node is installed: `npm install -g bobshell` or `irm -Uri https://bob.ibm.com/download/bobshell.ps1 | iex`|
+| **Bob Shell** | real Bob mode only | after Node 22.15+ is installed. Windows: `irm https://bob.ibm.com/download/bobshell.ps1 \| iex` · Mac/Linux: `curl -fsSL https://bob.ibm.com/download/bobshell.sh \| bash` |
 | **IBM Bob IDE** | optional ("Open in Bob IDE" button) | from the hackathon / https://bob.ibm.com |
 
 Check what you have:
@@ -94,7 +94,7 @@ Bob's cost units and takes about 4–8 minutes.
 | `python` is not recognized | The launcher falls back to `py`; if both commands are unavailable, reinstall Python with "Add python.exe to PATH" ticked, then open a new terminal |
 | "running scripts is disabled" (Windows) | Run `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass`, then retry `.\start.ps1` |
 | Port 8000 is busy | Windows: `... start.ps1 -Port 8010` · Mac/Linux: `PORT=8010 ./start.sh` |
-| "Bob Shell not found" | Install Node.js, then `npm install -g bobshell`, and open a new terminal |
+| "Bob Shell not found" | Install Node.js 22.15+, then Bob Shell (Windows: `irm https://bob.ibm.com/download/bobshell.ps1 \| iex` · Mac/Linux: `curl -fsSL https://bob.ibm.com/download/bobshell.sh \| bash`), and open a new terminal |
 | "Bob Shell needs the IBM license accepted" | Add `BOB_ACCEPT_LICENSE=true` to `.env` (after reading the license) |
 | "repository not found, or it is private" | Only public repos are supported |
 | Steps show "Bob key missing" | Check `.env` is in the ModelXGit folder and has `BOB_API_KEY=` |
