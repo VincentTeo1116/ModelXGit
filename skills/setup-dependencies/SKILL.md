@@ -68,6 +68,7 @@ Save to `onboarding/` (create it if needed):
     "issues": ["..."]
   }
   ```
+  Use `"run_command": null` only when the repository has nothing to run (for example, docs only).
 - `onboarding/setup_report.md`: the exact copy-paste commands that worked, in order, plus the issues found and how to fix them.
 
 End with a short chat summary: status (ready / partly ready / blocked), how to run it, and what the developer still has to do themselves.

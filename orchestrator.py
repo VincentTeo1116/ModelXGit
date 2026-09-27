@@ -627,6 +627,8 @@ OUTPUT_CONTRACTS: Dict[str, Dict[str, type]] = {
     "onboarding/secrets_history.json": {"summary": dict, "findings": list},
     "onboarding/secrets_precommit.json": {"summary": dict, "gitignore_status": dict, "findings": list, "hook": dict},
 }
+# Keys that may be null when there is honestly nothing to put there (e.g. a repo with nothing to run).
+NULLABLE_KEYS = {("onboarding/setup.json", "run_command")}
 _patterns_module = None
 
 
@@ -695,6 +697,8 @@ def validate_output(rel: str, text: str) -> List[str]:
     for key, typ in contract.items():
         if key not in data:
             problems.append(f"missing key '{key}'")
+        elif data[key] is None and (rel, key) in NULLABLE_KEYS:
+            continue
         elif not isinstance(data[key], typ) or (typ is int and isinstance(data[key], bool)):
             problems.append(f"'{key}' should be {typ.__name__}, got {type(data[key]).__name__}")
     if rel.endswith("architecture.json") and isinstance(data.get("nodes"), list) and isinstance(data.get("edges"), list):

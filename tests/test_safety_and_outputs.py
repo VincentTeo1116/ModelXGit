@@ -154,3 +154,9 @@ def test_clone_retries_network_errors_only(monkeypatch, tmp_path):
     with pytest.raises(RuntimeError):
         o.clone_with_retry("https://github.com/a/b.git", None, tmp_path / "b", pause=0)
     assert len(calls) == 1
+
+
+def test_run_command_may_be_null_but_not_other_keys():
+    base = {"toolchain": [], "env": {}, "steps": [], "run_command": None, "tests": "none found", "issues": []}
+    assert o.validate_output("onboarding/setup.json", json.dumps(base)) == []
+    assert o.validate_output("onboarding/setup.json", json.dumps({**base, "tests": None})) == ["'tests' should be str, got NoneType"]
