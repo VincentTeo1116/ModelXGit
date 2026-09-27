@@ -62,4 +62,8 @@ MAX_PARALLEL_SKILLS = _int("MAX_PARALLEL_SKILLS", 3)
 REPO_CONTEXT_MAX_CHARS = _int("REPO_CONTEXT_MAX_CHARS", 1_000_000)
 REPO_FILE_MAX_CHARS = _int("REPO_FILE_MAX_CHARS", 400_000)
 
-CORS_ORIGINS = [o.strip() for o in os.getenv("CORS_ORIGINS", "*").split(",") if o.strip()]
+# Impact metrics: your team's own measured time to onboard a repo by hand (minutes).
+# Leave empty rather than guessing; the app then shows no comparison.
+MANUAL_BASELINE_MINUTES = float(os.getenv("MANUAL_BASELINE_MINUTES") or 0) or None
+
+CORS_ORIGINS =[o.strip() for o in os.getenv("CORS_ORIGINS", "*").split(",") if o.strip()]

@@ -67,6 +67,23 @@ function fmtDur(a, b) {
   const s = (b || Date.now() / 1000) - a;
   return s < 60 ? `${s.toFixed(1)}s` : `${Math.floor(s / 60)}m ${Math.round(s % 60)}s`;
 }
+function fmtSecs(sec) {
+  if (sec == null) return "—";
+  const s = Math.round(sec);
+  return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, "0")}s`;
+}
+function localBaseline() { return Number(store.get("rp.baseline", "")) || null; }
+function tile(label, num, sub) {
+  return `<div class="tile"><span class="lbl">${esc(label)}</span><span class="num">${esc(num)}</span><small>${esc(sub || "")}</small></div>`;
+}
+function compareHtml(onboardSec, serverBaseline) {
+  const manual = localBaseline() || serverBaseline;
+  if (!manual) return `<div class="compare hint">Add your team's measured time to onboard a repo by hand in <a href="#/settings">Settings</a> to compare. We never guess it.</div>`;
+  if (!onboardSec) return `<div class="compare hint">Manual baseline: ${esc(manual)} min. The comparison appears when the pipeline finishes.</div>`;
+  const auto = onboardSec / 60;
+  const pct = Math.round(100 * (1 - auto / manual));
+  return `<div class="compare">Manual baseline <strong>${esc(manual)} min</strong> → automated <strong>${esc(auto.toFixed(1))} min</strong>: <strong>${esc(pct)}% faster</strong>, ${esc((manual - auto).toFixed(1))} min saved per repo.</div>`;
+}
 function statusPill(s) { return `<span class="status ${esc(s)}">${esc(s)}</span>`; }
 
 async function api(path, opts = {}) {
@@ -276,6 +293,9 @@ views.home = async (view) => {
       <div class="confirm-panel" id="confirmPanel" hidden></div>
     </section>
 
+    <section class="section-head"><div><p class="eyebrow">MEASURED BY THE BACKEND</p><h2>Impact so far</h2></div></section>
+    <div id="impactStrip"></div>
+
     <section class="section-head"><div><p class="eyebrow">YOUR PROJECTS</p><h2>Recent repositories</h2></div><a href="#/repos" class="view-all">View all <span>→</span></a></section>
     <div id="recent"></div>
 
@@ -340,6 +360,18 @@ views.home = async (view) => {
       ? `<div class="repo-grid">${jobs.slice(0, 3).map(repoCard).join("")}</div>`
       : `<div class="empty">No repositories yet. Paste a link above and Bob will take it from there.</div>`;
     $("#activity").innerHTML = activityHtml(jobs);
+    try {
+      const m = await api("/api/metrics");
+      $("#impactStrip").innerHTML = m.repos_onboarded
+        ? `<div class="impact-grid five">
+            ${tile("Repos onboarded", m.repos_onboarded, "full pipeline finished")}
+            ${tile("Avg time to onboard", fmtSecs(m.avg_time_to_onboard_seconds), "fastest " + fmtSecs(m.fastest_seconds))}
+            ${tile("Files produced", m.files_produced, "onboarding/ + README")}
+            ${tile("Secret findings", m.secret_findings, "masked, history + current")}
+            ${tile("Bob tool calls", m.bob_tool_calls, m.bob_runs + " Bob runs")}
+          </div>${compareHtml(m.avg_time_to_onboard_seconds, m.manual_baseline_minutes)}`
+        : `<div class="empty">Numbers appear here after the first onboarding finishes.</div>`;
+    } catch { /* shown via health */ }
   };
   await renderLists();
   every(3000, () => { if (document.visibilityState === "visible") renderLists(); });
@@ -398,6 +430,7 @@ views.settings = async (view) => {
         <label class="field" for="apiBase">Backend URL<input class="text-input" id="apiBase" type="text" spellcheck="false" placeholder="same address as this page"><small>Leave empty when the backend serves this page. Set it (e.g. http://127.0.0.1:8000) when the page is opened from somewhere else.</small></label>
         <label class="field" for="pollMs">Live update speed
           <select class="text-input" id="pollMs"><option value="1000">Every second</option><option value="1500">Every 1.5 seconds</option><option value="3000">Every 3 seconds</option><option value="5000">Every 5 seconds</option></select></label>
+        <label class="field" for="baseline">Manual onboarding time (minutes)<input class="text-input" id="baseline" type="number" min="1" step="1" placeholder="your team's own measurement"><small>How long it takes your team to onboard a repo by hand. Used only for the "faster" comparison. Leave it empty rather than guess.</small></label>
         <div class="confirm-actions"><button class="btn btn-primary" id="saveSettings" type="button">Save</button><button class="btn btn-ghost" id="testConn" type="button">Test connection</button></div>
       </div>
       <div class="card">
@@ -415,6 +448,7 @@ BOB_ACCEPT_LICENSE=true</code></pre></div>
     ${footerHtml()}`;
   $("#apiBase").value = state.apiBase;
   $("#pollMs").value = String(state.pollMs);
+  $("#baseline").value = store.get("rp.baseline", "");
   const showHealth = async () => {
     await refreshHealth();
     const h = state.health;
@@ -434,6 +468,7 @@ BOB_ACCEPT_LICENSE=true</code></pre></div>
     state.pollMs = Number($("#pollMs").value);
     store.set("rp.apiBase", state.apiBase);
     store.set("rp.pollMs", String(state.pollMs));
+    store.set("rp.baseline", Number($("#baseline").value) > 0 ? String(Number($("#baseline").value)) : "");
     toast("Settings saved", "ok");
     showHealth(); refreshJobs();
   };
@@ -458,6 +493,10 @@ views.job = async (view, jobId) => {
 
   view.innerHTML = `
     <div class="job-head" id="jobHead"></div>
+    <section class="card impact-card" id="impactCard" style="margin-bottom:18px">
+      <div class="card-title-row"><h2 class="card-title">Impact</h2><span class="badge neutral">measured by the backend</span></div>
+      <div id="impactBox"><div class="empty">Measuring…</div></div>
+    </section>
     <div class="job-grid">
       <section class="card">
         <div class="card-title-row"><h2 class="card-title">Pipeline</h2><span id="pipeTime" class="step-time"></span></div>
@@ -592,6 +631,23 @@ views.job = async (view, jobId) => {
       ${!ready && !running ? `<p class="qa-hint" style="margin:10px 0 0">Available when the skills above have succeeded.</p>` : ""}`;
   };
 
+  const renderImpact = async () => {
+    let m;
+    try { m = await api(`/api/jobs/${encodeURIComponent(jobId)}/metrics`); } catch { return; }
+    const stand = !m.bob.cost && !m.bob.tool_calls;
+    $("#impactBox").innerHTML = `
+      <div class="impact-grid">
+        ${tile("Time to onboard", m.time_to_onboard_seconds ? fmtSecs(m.time_to_onboard_seconds) : "running…", `clone ${fmtSecs(m.clone_seconds)} · then Bob`)}
+        ${tile("Skills completed", `${m.skills.succeeded}/${m.skills.total}`, m.skills.failed ? `${m.skills.failed} failed` : m.skills.running ? `${m.skills.running} running` : "no failures")}
+        ${tile("Files produced", m.files_produced, "onboarding/ + README")}
+        ${tile("Secret findings", m.secret_findings.total, `history ${m.secret_findings.git_history} · current ${m.secret_findings.current_files}`)}
+        ${tile("Bob tool calls", stand ? "—" : m.bob.tool_calls, `${m.bob.runs} Bob runs · ${fmtSecs(m.bob.seconds)} of Bob work`)}
+        ${tile("Bob cost", stand ? "—" : Number(m.bob.cost).toFixed(2), stand ? "stand-in: no real Bob" : "Bob's own figure")}
+      </div>
+      ${compareHtml(m.time_to_onboard_seconds, m.manual_baseline && m.manual_baseline.manual_minutes)}
+      <p class="qa-hint" style="margin:10px 0 0">Saved as <button class="file-chip" type="button" data-file="onboarding/metrics.json">onboarding/metrics.json</button> · secret counts are raw scanner findings; Bob's reports say which are false positives.</p>`;
+  };
+
   const renderIde = () => {
     const h = job.bob_ide;
     const box = $("#ideBox");
@@ -709,7 +765,7 @@ views.job = async (view, jobId) => {
   const renderAll = () => {
     renderHead(); renderSteps(); renderIde(); renderChat(); renderReadme();
     const sig = Object.values(job.steps).map((s) => s.status + (s.files_written || []).length).join("|");
-    if (sig !== finishedSig) { finishedSig = sig; renderFileList(); }
+    if (sig !== finishedSig) { finishedSig = sig; renderFileList(); renderImpact(); }
   };
   const poll = async () => {
     try {

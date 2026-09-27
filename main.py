@@ -9,6 +9,8 @@ Run:  uvicorn main:app --port 8000
                                                 -> clone + repo-clone report + all auto skills
   GET  /api/jobs                                all jobs, newest first (summaries, no outputs)
   GET  /api/jobs/{job_id}                       job status and every step's result
+  GET  /api/jobs/{job_id}/metrics               measured impact: time to onboard, files, findings, Bob usage
+  GET  /api/metrics                             the same, totalled over all onboarded repos
   GET  /api/repos/{repo_id}/results             same, by repo
   POST /api/repos/{repo_id}/skills/{skill}/run  run a manual skill (or retry a failed auto one);
                                                 codebase-qa body: {"role": "...", "question": "..."}
@@ -125,6 +127,32 @@ def list_jobs():
         }
         for j in jobs
     ]
+
+
+@app.get("/api/metrics")
+def workspace_metrics():
+    """Totals over every onboarding in this backend's memory (for the overview and slides)."""
+    ms = [orchestrator.metrics(j) for j in orchestrator.jobs.values() if j.repo.cloned]
+    done = [m["time_to_onboard_seconds"] for m in ms if m["time_to_onboard_seconds"]]
+    return {
+        "repos_onboarded": len(done),
+        "avg_time_to_onboard_seconds": round(sum(done) / len(done), 1) if done else None,
+        "fastest_seconds": min(done) if done else None,
+        "files_produced": sum(m["files_produced"] for m in ms),
+        "secret_findings": sum(m["secret_findings"]["total"] for m in ms),
+        "bob_runs": sum(m["bob"]["runs"] for m in ms),
+        "bob_tool_calls": sum(m["bob"]["tool_calls"] for m in ms),
+        "bob_cost": round(sum(m["bob"]["cost"] for m in ms), 4),
+        "manual_baseline_minutes": config.MANUAL_BASELINE_MINUTES,
+    }
+
+
+@app.get("/api/jobs/{job_id}/metrics")
+def job_metrics(job_id: str):
+    job = orchestrator.jobs.get(job_id)
+    if not job:
+        raise HTTPException(404, "Job not found")
+    return orchestrator.metrics(job)
 
 
 @app.get("/api/jobs/{job_id}")

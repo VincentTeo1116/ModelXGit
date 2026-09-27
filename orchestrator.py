@@ -98,6 +98,7 @@ class RepoInfo(BaseModel):
     commit: Optional[Dict[str, str]] = None
     commits: Optional[int] = None
     facts: Optional[Dict[str, Any]] = None  # tracked file count, license, README, CI... (file_facts)
+    clone_seconds: Optional[float] = None
 
 
 class Job(BaseModel):
@@ -338,8 +339,9 @@ def _skip_file(name: str) -> bool:
     return any(fnmatch.fnmatch(name, pat) for pat in SKIP_FILES)
 
 
-def build_repo_context(repo_path: Path) -> Dict[str, Any]:
-    """File tree plus text file contents, within the size budget."""
+def build_repo_context(repo_path: Path, exclude: frozenset = frozenset()) -> Dict[str, Any]:
+    """File tree plus text file contents, within the size budget.
+    `exclude`: files the backend added itself (the Bob IDE hand-off), not part of the repo."""
     candidates = []
     for root, dirs, files in os.walk(repo_path):
         dirs[:] = sorted(d for d in dirs if d not in SKIP_DIRS)
@@ -347,7 +349,9 @@ def build_repo_context(repo_path: Path) -> Dict[str, Any]:
             full = Path(root) / name
             if full.is_symlink():  # never follow links out of the repo
                 continue
-            candidates.append((full.relative_to(repo_path).as_posix(), full))
+            rel = full.relative_to(repo_path).as_posix()
+            if rel not in exclude:
+                candidates.append((rel, full))
 
     file_tree = [rel for rel, _ in candidates]
     included: List[Dict[str, Any]] = []
@@ -561,6 +565,97 @@ def install_bob_ide_files(repo_dir: Path, registry: "SkillRegistry") -> Dict[str
     }
 
 
+# ---- Impact metrics: measured by the backend, never written by Bob -------------------
+def summarize_tools(tools: Dict[str, Any]) -> Dict[str, Any]:
+    """Counts only (no values) from the local scanner scripts."""
+    out = {}
+    for spec, r in tools.items():
+        name = spec.split()[0].rsplit("/", 1)[-1]
+        data = r.get("output") if isinstance(r.get("output"), dict) else {}
+        findings = data.get("findings", [])
+        by_type: Dict[str, int] = {}
+        for f in findings:
+            by_type[f.get("type", "?")] = by_type.get(f.get("type", "?"), 0) + 1
+        out[name] = {
+            "exit_code": r.get("exit_code"), "error": r.get("error"),
+            "findings": len(findings), "by_type": by_type,
+            "gitignore_problems": len(data.get("gitignore_problems", [])),
+            "commits_scanned": data.get("commits_scanned"),
+        }
+    return out
+
+
+def compute_metrics(job: "Job", pipeline: List[str]) -> Dict[str, Any]:
+    steps = job.steps
+    pipe = [steps[n] for n in pipeline if n in steps]
+    finished = [s for s in pipe if s.finished_at and s.started_at]
+    onboard_seconds = (round(max(s.finished_at for s in finished) - min(s.started_at for s in finished), 1)
+                       if pipe and len(finished) == len(pipe) else None)
+
+    def last_stats(step: "JobStep") -> Dict[str, Any]:
+        return ((step.runs[-1].output or {}).get("stats") or {}) if step.runs else {}
+
+    all_stats = [(r.output or {}).get("stats") or {} for s in steps.values() for r in s.runs]
+    scanners = {name: (steps[name].output or {}).get("scanner") or {}
+                for name in ("git-history-secret-audit", "secret-precommit-scanner") if name in steps}
+    history = sum(v.get("findings", 0) for v in scanners.get("git-history-secret-audit", {}).values())
+    current = sum(v.get("findings", 0) for v in scanners.get("secret-precommit-scanner", {}).values())
+    files = sorted({f for s in steps.values() for f in s.files_written})
+
+    comparison = None
+    baseline = config.MANUAL_BASELINE_MINUTES
+    if baseline and onboard_seconds:
+        auto_min = onboard_seconds / 60
+        comparison = {
+            "manual_minutes": baseline, "automated_minutes": round(auto_min, 1),
+            "minutes_saved": round(baseline - auto_min, 1),
+            "faster_by_percent": round(100 * (1 - auto_min / baseline)),
+            "source": "MANUAL_BASELINE_MINUTES (the team's own measurement)",
+        }
+    return {
+        "generated_by": "Model X backend: measured, not written by Bob",
+        "measured_at": time.time(),
+        "repo": job.repo.url, "branch": job.repo.branch,
+        "commit": (job.repo.commit or {}).get("hash"),
+        "clone_seconds": job.repo.clone_seconds,
+        "time_to_onboard_seconds": onboard_seconds,
+        "skills": {
+            "total": len(steps),
+            "succeeded": sum(s.status == StepStatus.success for s in steps.values()),
+            "failed": sum(s.status == StepStatus.failed for s in steps.values()),
+            "running": sum(s.status in ACTIVE for s in steps.values()),
+        },
+        "files_produced": len(files),
+        "files": files,
+        "secret_findings": {
+            "git_history": history, "current_files": current, "total": history + current,
+            "note": "Raw scanner findings, values masked; Bob's reports say which are false positives.",
+        },
+        "bob": {
+            "runs": sum(len(s.runs) for s in steps.values()),
+            "tool_calls": sum(st.get("tool_calls") or 0 for st in all_stats),
+            "seconds": round(sum(st.get("duration_ms") or 0 for st in all_stats) / 1000, 1),
+            "cost": round(sum(st.get("session_costs") or 0 for st in all_stats), 4),
+            "task_ids": [st["task_id"] for st in all_stats if st.get("task_id")],
+        },
+        "steps": [
+            {"skill": name, "status": s.status,
+             "seconds": round(s.finished_at - s.started_at, 1) if s.finished_at and s.started_at else None,
+             "tool_calls": last_stats(s).get("tool_calls"), "cost": last_stats(s).get("session_costs")}
+            for name, s in steps.items()
+        ],
+        "manual_baseline": comparison,
+    }
+
+
+def write_metrics(repo_dir: Path, metrics: Dict[str, Any]) -> None:
+    target = repo_dir / "onboarding" / "metrics.json"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    tmp = target.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(metrics, indent=2, default=str), encoding="utf-8")
+    os.replace(tmp, target)  # atomic: parallel skills may finish at the same time
+
+
 def collect_outputs(repo_dir: Path, skill: "SkillInfo", since: float) -> List[str]:
     """The skill's declared files that Bob wrote during this run."""
     return [rel for rel in skill.produces
@@ -659,9 +754,11 @@ class Orchestrator:
         entry = self.registry.entry
         clone_step = entry.name if entry else CLONE_EVENT
         dest = self.repo_dir(job)
-        self._update(job, clone_step, status=StepStatus.running, started_at=time.time())
+        clone_started = time.time()
+        self._update(job, clone_step, status=StepStatus.running, started_at=clone_started)
         try:
             await asyncio.to_thread(clone_repo, job.repo.url, job.repo.branch, dest, job.repo.depth)
+            job.repo.clone_seconds = round(time.time() - clone_started, 2)
             facts = await asyncio.to_thread(repo_facts, dest)
             job.repo.cloned = True
             job.repo.commit, job.repo.commits = facts["commit"], facts["commits"]
@@ -729,10 +826,12 @@ class Orchestrator:
         written: List[str] = []
         try:
             skill_md = Path(skill.path).read_text(encoding="utf-8")
+            tools = (await asyncio.to_thread(run_local_tools, skill, self.repo_dir(job))
+                     if skill.local_tools else None)
             if self.bob.reads_workspace:
-                output, written = await self._run_with_shell(job, skill, mode, user_input, skill_md, started)
+                output, written = await self._run_with_shell(job, skill, mode, user_input, skill_md, started, tools)
             else:
-                context = await self._context(job, skill, mode, user_input)
+                context = await self._context(job, skill, mode, user_input, tools=tools)
                 async with self._bob_slots:
                     output = await self.bob.run_skill(skill.name, skill_md, context)
                 files = output.get("files")
@@ -742,6 +841,8 @@ class Orchestrator:
                         output.setdefault("warnings", []).append(
                             f"Ignored files outside onboarding/ and README.md: {rejected}"
                         )
+            if tools is not None:
+                output["scanner"] = summarize_tools(tools)  # counts only, for the impact metrics
             run.status, run.output = StepStatus.success, output
         except Exception as e:
             error = str(e)
@@ -756,14 +857,26 @@ class Orchestrator:
             job, skill.name, status=run.status, output=run.output, error=run.error,
             files_written=sorted(set(step.files_written) | set(written)), finished_at=run.finished_at,
         )
+        try:  # metrics must never break a run
+            await asyncio.to_thread(write_metrics, self.repo_dir(job), self.metrics(job))
+        except Exception:
+            pass
+
+    @property
+    def pipeline_names(self) -> List[str]:
+        entry = self.registry.entry
+        return ([entry.name] if entry else [CLONE_EVENT]) + [s.name for s in self.registry.auto_after(CLONE_EVENT)]
+
+    def metrics(self, job: Job) -> Dict[str, Any]:
+        return compute_metrics(job, self.pipeline_names)
 
     async def _run_with_shell(
         self, job: Job, skill: SkillInfo, mode: str, user_input: Optional[Dict[str, Any]],
-        skill_md: str, started: float,
+        skill_md: str, started: float, tools: Optional[Dict[str, Any]] = None,
     ) -> Tuple[Dict[str, Any], List[str]]:
         """Bob Shell works in the clone: it reads the code and writes onboarding/ itself."""
         repo_dir = self.repo_dir(job)
-        context = await self._context(job, skill, mode, user_input, include_repo=False)
+        context = await self._context(job, skill, mode, user_input, include_repo=False, tools=tools)
         await asyncio.to_thread(write_skill_bundle, repo_dir, skill, skill_md, context)
         answer_mode = bool(user_input)
         async with self._bob_slots:
@@ -790,7 +903,7 @@ class Orchestrator:
 
     async def _context(
         self, job: Job, skill: SkillInfo, mode: str, user_input: Optional[Dict[str, Any]],
-        include_repo: bool = True,
+        include_repo: bool = True, tools: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         context: Dict[str, Any] = {
             "orchestrator": (
@@ -809,7 +922,7 @@ class Orchestrator:
         if include_repo:  # HTTP: Bob can't open the clone, so the files travel in the request
             context["repo"] = await self._repo_context(job)
         if skill.local_tools:
-            context["local_tool_results"] = await asyncio.to_thread(
+            context["local_tool_results"] = tools if tools is not None else await asyncio.to_thread(
                 run_local_tools, skill, self.repo_dir(job)
             )
         step = job.steps.get(skill.name)
@@ -826,7 +939,8 @@ class Orchestrator:
         """Built once per repo, shared by all skills."""
         future = self._contexts.get(job.repo_id)
         if future is None:
-            future = asyncio.ensure_future(asyncio.to_thread(build_repo_context, self.repo_dir(job)))
+            added = frozenset((job.bob_ide or {}).get("installed", []))
+            future = asyncio.ensure_future(asyncio.to_thread(build_repo_context, self.repo_dir(job), added))
             self._contexts[job.repo_id] = future
         try:
             return await future
