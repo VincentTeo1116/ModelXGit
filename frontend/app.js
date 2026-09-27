@@ -281,6 +281,13 @@ const views = {};
 views.home = async (view) => {
   view.innerHTML = `
     ${heroHtml()}
+    <ol class="flow" aria-label="How it works">
+      <li><span class="flow-n">1</span><strong>Paste a repo link</strong><small>you confirm before anything runs</small></li>
+      <li><span class="flow-n">2</span><strong>Bob runs 5 skills in parallel</strong><small>setup, stack, architecture, 2 secret audits</small></li>
+      <li><span class="flow-n">3</span><strong>Ask Bob, get a README</strong><small>role-based answers with file references</small></li>
+      <li><span class="flow-n">4</span><strong>Continue in Bob IDE</strong><small>same skills + Q&amp;A mode in .bob/</small></li>
+    </ol>
+
     <section class="card" id="clone">
       <div class="card-heading">
         <div><span class="step-pill">01</span><span class="heading-kicker">START HERE</span><h2>Clone a repository</h2></div>
@@ -908,9 +915,19 @@ views.job = async (view, jobId) => {
     const sig = Object.values(job.steps).map((s) => s.status + (s.files_written || []).length).join("|");
     if (sig !== finishedSig) { finishedSig = sig; renderFileList(); renderImpact(); }
   };
+  let wasActive = ACTIVE.has(job.status) || job.status === "queued";
   const poll = async () => {
     try {
       job = await api(`/api/jobs/${encodeURIComponent(jobId)}`);
+      const active = ACTIVE.has(job.status) || job.status === "queued";
+      if (wasActive && !active) {
+        const pipe = PIPELINE.map((n) => job.steps[n]).filter(Boolean);
+        const ok = pipe.every((s) => s.status === "success");
+        const secs = ok ? Math.max(...pipe.map((s) => s.finished_at)) - Math.min(...pipe.map((s) => s.started_at)) : 0;
+        toast(ok ? `Onboarding finished in ${fmtSecs(secs)}. Ask Bob anything, or continue in Bob IDE.`
+                 : `Onboarding finished with ${pipe.filter((s) => s.status !== "success").length} failed step(s). Use Retry failed.`, ok ? "ok" : "bad");
+      }
+      wasActive = active;
       if (!(job.steps["codebase-qa"] && job.steps["codebase-qa"].status === "running")) state.pendingQuestion = null;
       renderAll();
     } catch { /* keep the last view; health shows offline */ }
