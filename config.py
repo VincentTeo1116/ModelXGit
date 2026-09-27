@@ -54,6 +54,14 @@ WORKSPACE = Path(
     os.getenv("WORKSPACE_DIR") or Path(tempfile.gettempdir()) / "hackathon_workspaces"
 ).resolve()
 
+# Jobs are saved here as JSON so they survive a backend restart.
+JOBS_DIR = Path(os.getenv("JOBS_DIR") or WORKSPACE / "_jobs").resolve()
+
+# A failed Bob run is retried this many times after a short pause, but only for
+# temporary problems (timeouts, network errors, 5xx/429), never for a bad key or license.
+BOB_RETRIES = _int("BOB_RETRIES", 1)
+BOB_RETRY_DELAY = float(os.getenv("BOB_RETRY_DELAY") or 3)
+
 CLONE_TIMEOUT = _int("CLONE_TIMEOUT", 600)
 LOCAL_TOOL_TIMEOUT = _int("LOCAL_TOOL_TIMEOUT", 300)
 MAX_PARALLEL_SKILLS = _int("MAX_PARALLEL_SKILLS", 3)

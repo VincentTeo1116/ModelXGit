@@ -688,6 +688,15 @@ RESPONSE_FORMAT = {
 # -------------------------------------------------------------------
 ACTIVE = (StepStatus.pending, StepStatus.running)
 
+# Errors a second try can't fix: retrying them would only double the cost.
+PERMANENT_ERRORS = ("license", "bob_api_key is not set", "not found", "rejected the request",
+                    "http 401", "http 403", "http 404", "unauthorized", "forbidden",
+                    "invalid api key", "non-json")
+
+
+def is_transient(message: str) -> bool:
+    return not any(p in message.lower() for p in PERMANENT_ERRORS)
+
 
 class Orchestrator:
     def __init__(self, registry: SkillRegistry, bob: "BobShellClient | HttpBobClient"):
@@ -699,6 +708,41 @@ class Orchestrator:
         self._tasks: set = set()
         self._bob_slots = asyncio.Semaphore(config.MAX_PARALLEL_SKILLS)
         config.WORKSPACE.mkdir(parents=True, exist_ok=True)
+        config.JOBS_DIR.mkdir(parents=True, exist_ok=True)
+        self._load_jobs()
+
+    # ---- persistence: jobs survive a backend restart ------------------
+    def _save(self, job: Job):
+        try:
+            target = config.JOBS_DIR / f"{job.id}.json"
+            tmp = target.with_suffix(".json.tmp")
+            tmp.write_text(job.model_dump_json(), encoding="utf-8")
+            os.replace(tmp, target)  # atomic
+        except OSError:
+            pass  # saving is best-effort; the job keeps running in memory
+
+    def _load_jobs(self):
+        """Reload saved jobs. Steps that were running when the backend stopped are marked
+        failed, so they can be retried; the job never stays 'running' forever."""
+        for path in sorted(config.JOBS_DIR.glob("*.json")):
+            try:
+                job = Job.model_validate_json(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue  # skip a damaged file rather than refusing to start
+            if job.repo.cloned and not self.repo_dir(job).is_dir():
+                job.repo.cloned = False  # the clone was deleted since
+            interrupted = "Interrupted: the backend restarted during this step. Use Retry to run it again."
+            for name, step in job.steps.items():
+                if step.status in ACTIVE:
+                    if job.repo.cloned:
+                        step.status, step.error = StepStatus.failed, interrupted
+                    else:
+                        step.status, step.error = StepStatus.skipped, "repository not available after restart"
+                    step.finished_at = step.finished_at or time.time()
+            self.jobs[job.id] = job
+            self.repo_jobs[job.repo_id] = job.id
+            self._recompute(job)
+            self._save(job)
 
     # ---- jobs -------------------------------------------------------
     def create_job(self, url: str, branch: Optional[str], depth: Optional[int]) -> Job:
@@ -715,6 +759,7 @@ class Orchestrator:
             job.steps[CLONE_EVENT] = JobStep(skill=CLONE_EVENT)
         self.jobs[job.id] = job
         self.repo_jobs[job.repo_id] = job.id
+        self._save(job)
         return job
 
     def job_for_repo(self, repo_id: str) -> Optional[Job]:
@@ -729,6 +774,11 @@ class Orchestrator:
         for key, value in fields.items():
             setattr(step, key, value)
         job.updated_at = time.time()
+        self._recompute(job)
+        self._save(job)
+
+    @staticmethod
+    def _recompute(job: Job):
         statuses = [s.status for s in job.steps.values()]
         if all(s == StepStatus.pending for s in statuses):
             job.status = JobStatus.queued
@@ -740,6 +790,20 @@ class Orchestrator:
             job.status = JobStatus.success
         else:
             job.status = JobStatus.partial
+
+    async def _call_bob(self, call) -> Tuple[Any, Optional[str]]:
+        """Run one Bob call (a zero-argument coroutine factory), retrying temporary failures.
+        Returns (result, error of the failed first attempt or None)."""
+        first_error = None
+        for attempt in range(config.BOB_RETRIES + 1):
+            try:
+                async with self._bob_slots:
+                    return await call(), first_error
+            except Exception as e:
+                if attempt >= config.BOB_RETRIES or not is_transient(str(e)):
+                    raise
+                first_error = str(e)
+                await asyncio.sleep(config.BOB_RETRY_DELAY)
 
     def _spawn(self, coro):
         task = asyncio.create_task(coro)
@@ -832,8 +896,10 @@ class Orchestrator:
                 output, written = await self._run_with_shell(job, skill, mode, user_input, skill_md, started, tools)
             else:
                 context = await self._context(job, skill, mode, user_input, tools=tools)
-                async with self._bob_slots:
-                    output = await self.bob.run_skill(skill.name, skill_md, context)
+                output, retried = await self._call_bob(lambda: self.bob.run_skill(skill.name, skill_md, context))
+                if retried:
+                    output["retried_after"] = retried
+                    output.setdefault("warnings", []).append(f"Bob failed once and was retried: {retried[:200]}")
                 files = output.get("files")
                 if isinstance(files, dict) and files:
                     written, rejected = await asyncio.to_thread(write_outputs, self.repo_dir(job), files)
@@ -879,8 +945,8 @@ class Orchestrator:
         context = await self._context(job, skill, mode, user_input, include_repo=False, tools=tools)
         await asyncio.to_thread(write_skill_bundle, repo_dir, skill, skill_md, context)
         answer_mode = bool(user_input)
-        async with self._bob_slots:
-            result = await asyncio.to_thread(self.bob.run_prompt, shell_prompt(skill, answer_mode), repo_dir)
+        prompt = shell_prompt(skill, answer_mode)
+        result, retried = await self._call_bob(lambda: asyncio.to_thread(self.bob.run_prompt, prompt, repo_dir))
         handoff = frozenset((job.bob_ide or {}).get("installed", []))
         reverted = await asyncio.to_thread(contain_workspace, repo_dir, handoff)
         if handoff:  # undo any edit Bob made to the hand-off files
@@ -892,6 +958,9 @@ class Orchestrator:
         if answer_mode:
             output["answer"] = text
         warnings = []
+        if retried:
+            output["retried_after"] = retried
+            warnings.append(f"Bob failed once and was retried: {retried[:200]}")
         if reverted:
             warnings.append(f"Undid changes outside onboarding/ and README.md: {reverted}")
         missing = [f for f in skill.produces if f not in written and not (repo_dir / f).is_file()]
